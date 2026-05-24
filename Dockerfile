@@ -1,14 +1,14 @@
 # Stage 1: Build frontend
-FROM node:22-slim AS frontend-build
+FROM oven/bun:1 AS frontend-build
 ARG PUBLIC_SUPABASE_URL=https://bwzldaesynlruqukbnej.supabase.co
 ARG PUBLIC_SUPABASE_ANON_KEY
 ENV PUBLIC_SUPABASE_URL=$PUBLIC_SUPABASE_URL
 ENV PUBLIC_SUPABASE_ANON_KEY=$PUBLIC_SUPABASE_ANON_KEY
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile
 COPY frontend/ ./
-RUN npm run build
+RUN bun run build
 
 # Stage 2: Build backend
 FROM golang:1.26-bookworm AS backend-build
