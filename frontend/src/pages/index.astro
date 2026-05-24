@@ -1,0 +1,25 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Dashboard">
+  <div class="space-y-8">
+    <div>
+      <h1 class="text-3xl font-bold mb-1">Your Crates</h1>
+      <p class="text-neutral-400">Track, grade, and rediscover your vinyl collection.</p>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <a href="/collection" class="rounded-xl border border-neutral-800 bg-neutral-900 p-6 hover:border-amber-400 transition-colors">
+        <div class="text-2xl font-bold text-amber-400">—</div>
+        <div class="text-sm text-neutral-400 mt-1">Records in collection</div>
+      </a>
+      <a href="/wishlist" class="rounded-xl border border-neutral-800 bg-neutral-900 p-6 hover:border-amber-400 transition-colors">
+        <div class="text-2xl font-bold text-amber-400">—</div>
+        <div class="text-sm text-neutral-400 mt-1">On wishlist</div>
+      </a>
+      <div class="rounded-xl border border-neutral-800 bg-neutral-900 p-6">
+        <div class="text-2xl font-bold text-amber-400">—</div>
+        <div class="text-sm text-neutral-400 mt-1">For sale</div>
+      </div>
+    </div>
+  </div>
+</Layout>

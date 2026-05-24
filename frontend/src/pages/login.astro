@@ -1,0 +1,27 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Sign In">
+  <div class="max-w-sm mx-auto mt-16 space-y-6">
+    <div class="text-center">
+      <h1 class="text-3xl font-bold">Sign in</h1>
+      <p class="text-neutral-400 text-sm mt-2">Welcome back to CrateKeeper</p>
+    </div>
+    <div class="rounded-xl border border-neutral-800 bg-neutral-900 p-6 space-y-4">
+      <button class="w-full bg-amber-400 text-neutral-950 font-semibold py-3 rounded-lg hover:bg-amber-300 transition-colors">
+        Sign in with Passkey
+      </button>
+      <div class="relative">
+        <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-neutral-700"></div></div>
+        <div class="relative text-center text-xs text-neutral-500"><span class="bg-neutral-900 px-2">or</span></div>
+      </div>
+      <div class="space-y-3">
+        <input type="email" placeholder="Email" class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-amber-400" />
+        <input type="password" placeholder="Password" class="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-amber-400" />
+        <button class="w-full border border-neutral-700 text-neutral-100 font-medium py-2.5 rounded-lg hover:border-amber-400 transition-colors text-sm">
+          Sign in with email
+        </button>
+      </div>
+    </div>
+  </div>
+</Layout>

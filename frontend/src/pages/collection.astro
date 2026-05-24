@@ -1,0 +1,17 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Collection">
+  <div class="space-y-6">
+    <div class="flex items-center justify-between">
+      <h1 class="text-3xl font-bold">Collection</h1>
+      <button class="bg-amber-400 text-neutral-950 font-semibold px-4 py-2 rounded-lg hover:bg-amber-300 transition-colors text-sm">
+        + Add Record
+      </button>
+    </div>
+    <div class="rounded-xl border border-neutral-800 bg-neutral-900 p-8 text-center text-neutral-400">
+      <p class="text-lg">Your collection is empty.</p>
+      <p class="text-sm mt-1">Add your first record to get started.</p>
+    </div>
+  </div>
+</Layout>
