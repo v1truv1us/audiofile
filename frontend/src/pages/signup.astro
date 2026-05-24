@@ -1,0 +1,151 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Create Account">
+  <div class="max-w-sm mx-auto mt-12">
+    <div class="text-center mb-8">
+      <svg width="52" height="52" viewBox="0 0 52 52" class="mx-auto mb-4" aria-hidden="true">
+        <circle cx="26" cy="26" r="25" fill="#412402"/>
+        <circle cx="26" cy="26" r="20" fill="none" stroke="#FAC775" stroke-width="0.8" opacity="0.5"/>
+        <circle cx="26" cy="26" r="15" fill="none" stroke="#FAC775" stroke-width="0.8" opacity="0.4"/>
+        <circle cx="26" cy="26" r="10" fill="none" stroke="#FAC775" stroke-width="0.8" opacity="0.35"/>
+        <circle cx="26" cy="26" r="6" fill="#BA7517"/>
+        <circle cx="26" cy="26" r="2" fill="rgba(0,0,0,0.4)"/>
+      </svg>
+      <h1 class="font-serif text-3xl text-espresso font-normal mb-1">Start your collection</h1>
+      <p class="text-gold-dark text-xs tracking-[0.1em] uppercase">Create your CrateKeeper account</p>
+    </div>
+
+    <div id="error-msg" class="hidden mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded px-4 py-3 text-center"></div>
+    <div id="success-msg" class="hidden mb-4 text-sm text-green-800 bg-green-50 border border-green-200 rounded px-4 py-3 text-center"></div>
+
+    <div class="bg-white border border-gold/50 rounded-lg p-6 space-y-4">
+      <div id="signup-section" class="space-y-2.5">
+        <input id="email" type="email" placeholder="Email address" class="w-full border border-gold/40 bg-cream text-espresso rounded px-4 py-2.5 text-sm placeholder:text-gold-muted/60 focus:outline-none focus:border-gold-dark" />
+        <input id="password" type="password" placeholder="Password (min 8 characters)" class="w-full border border-gold/40 bg-cream text-espresso rounded px-4 py-2.5 text-sm placeholder:text-gold-muted/60 focus:outline-none focus:border-gold-dark" />
+        <input id="confirm-password" type="password" placeholder="Confirm password" class="w-full border border-gold/40 bg-cream text-espresso rounded px-4 py-2.5 text-sm placeholder:text-gold-muted/60 focus:outline-none focus:border-gold-dark" />
+        <button id="signup-btn" class="w-full bg-espresso text-gold text-xs tracking-[0.1em] uppercase py-3 rounded hover:bg-espresso/90 transition-colors disabled:opacity-50">
+          Create Account
+        </button>
+      </div>
+
+      <div id="passkey-section" class="hidden space-y-3 border-t border-gold-muted/30 pt-4">
+        <div>
+          <h2 class="font-serif text-xl text-espresso font-normal">Add a passkey</h2>
+          <p class="text-xs text-gold-dark mt-1">Use Face ID, Touch ID, Windows Hello, or your device lock to sign in next time.</p>
+        </div>
+        <input id="passkey-name" type="text" placeholder="Passkey name (optional)" class="w-full border border-gold/40 bg-cream text-espresso rounded px-4 py-2.5 text-sm placeholder:text-gold-muted/60 focus:outline-none focus:border-gold-dark" />
+        <button id="register-passkey-btn" class="w-full bg-espresso text-gold text-xs tracking-[0.1em] uppercase py-3 rounded hover:bg-espresso/90 transition-colors disabled:opacity-50">
+          Register Passkey
+        </button>
+        <button id="skip-passkey-btn" class="w-full text-espresso text-xs tracking-[0.08em] uppercase py-2.5 rounded hover:bg-cream transition-colors">
+          Skip for now
+        </button>
+      </div>
+
+      <p class="text-center text-[10px] text-gold-muted tracking-wide">
+        Already have an account? <a href="/login" class="text-espresso underline underline-offset-2">Sign in</a>
+      </p>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  import { registerCurrentUserPasskey, getErrorMessage } from '../lib/passkeys'
+  import { supabase } from '../lib/supabase'
+
+  const btn = document.getElementById('signup-btn') as HTMLButtonElement
+  const registerPasskeyBtn = document.getElementById('register-passkey-btn') as HTMLButtonElement
+  const skipPasskeyBtn = document.getElementById('skip-passkey-btn') as HTMLButtonElement
+  const signupSection = document.getElementById('signup-section')!
+  const passkeySection = document.getElementById('passkey-section')!
+  const errorMsg = document.getElementById('error-msg')!
+  const successMsg = document.getElementById('success-msg')!
+
+  function showError(message: string) {
+    errorMsg.textContent = message
+    errorMsg.classList.remove('hidden')
+  }
+
+  function showSuccess(message: string) {
+    successMsg.textContent = message
+    successMsg.classList.remove('hidden')
+  }
+
+  btn.addEventListener('click', async () => {
+    const email = (document.getElementById('email') as HTMLInputElement).value.trim()
+    const password = (document.getElementById('password') as HTMLInputElement).value
+    const confirm = (document.getElementById('confirm-password') as HTMLInputElement).value
+
+    errorMsg.classList.add('hidden')
+    successMsg.classList.add('hidden')
+
+    if (!email || !password) {
+      showError('Please enter your email and password.')
+      return
+    }
+
+    if (password.length < 8) {
+      showError('Password must be at least 8 characters.')
+      return
+    }
+
+    if (password !== confirm) {
+      showError('Passwords do not match.')
+      return
+    }
+
+    btn.disabled = true
+    btn.textContent = 'Creating account…'
+
+    const { error } = await supabase.auth.signUp({ email, password })
+
+    if (error) {
+      showError(error.message)
+      btn.disabled = false
+      btn.textContent = 'Create Account'
+      return
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession()
+
+    btn.disabled = true
+    signupSection.classList.add('hidden')
+
+    if (sessionData.session) {
+      showSuccess('Account created. Add a passkey now so you can sign in with this device next time.')
+      passkeySection.classList.remove('hidden')
+    } else {
+      showSuccess('Account created! Check your email to confirm, then sign in and add a passkey from settings.')
+    }
+  })
+
+  registerPasskeyBtn.addEventListener('click', async () => {
+    errorMsg.classList.add('hidden')
+    successMsg.classList.add('hidden')
+    registerPasskeyBtn.disabled = true
+    registerPasskeyBtn.textContent = 'Waiting for passkey…'
+
+    try {
+      const friendlyName = (document.getElementById('passkey-name') as HTMLInputElement).value
+      const { error } = await registerCurrentUserPasskey(friendlyName)
+
+      if (error) {
+        showError(error.message)
+        return
+      }
+
+      showSuccess('Passkey registered. Redirecting…')
+      window.location.href = '/'
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Passkey registration failed.'))
+    } finally {
+      registerPasskeyBtn.disabled = false
+      registerPasskeyBtn.textContent = 'Register Passkey'
+    }
+  })
+
+  skipPasskeyBtn.addEventListener('click', () => {
+    window.location.href = '/'
+  })
+</script>

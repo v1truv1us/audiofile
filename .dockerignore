@@ -1,0 +1,9 @@
+.git
+node_modules
+.env
+*.db
+.solo
+frontend/node_modules
+frontend/.astro
+frontend/dist
+backend/server

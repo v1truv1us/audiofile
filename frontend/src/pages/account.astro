@@ -1,0 +1,75 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Account">
+  <div class="max-w-sm mx-auto mt-12">
+    <div class="text-center mb-8">
+      <h1 class="font-serif text-3xl text-espresso font-normal mb-1">Account</h1>
+      <p class="text-gold-dark text-xs tracking-[0.1em] uppercase">Manage your sign-in methods</p>
+    </div>
+
+    <div id="error-msg" class="hidden mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded px-4 py-3 text-center"></div>
+    <div id="success-msg" class="hidden mb-4 text-sm text-green-800 bg-green-50 border border-green-200 rounded px-4 py-3 text-center"></div>
+
+    <div class="bg-white border border-gold/50 rounded-lg p-6 space-y-4">
+      <section class="space-y-3">
+        <div>
+          <h2 class="font-serif text-xl text-espresso font-normal">Passkeys</h2>
+          <p class="text-xs text-gold-dark mt-1">Add a passkey so you can sign in with Face ID, Touch ID, Windows Hello, or your device lock.</p>
+        </div>
+        <input id="passkey-name" type="text" placeholder="Passkey name (optional)" class="w-full border border-gold/40 bg-cream text-espresso rounded px-4 py-2.5 text-sm placeholder:text-gold-muted/60 focus:outline-none focus:border-gold-dark" />
+        <button id="register-passkey-btn" class="w-full bg-espresso text-gold text-xs tracking-[0.1em] uppercase py-3 rounded hover:bg-espresso/90 transition-colors disabled:opacity-50">
+          Register Passkey
+        </button>
+      </section>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  import { registerCurrentUserPasskey, getErrorMessage } from '../lib/passkeys'
+  import { supabase } from '../lib/supabase'
+
+  const registerPasskeyBtn = document.getElementById('register-passkey-btn') as HTMLButtonElement
+  const errorMsg = document.getElementById('error-msg')!
+  const successMsg = document.getElementById('success-msg')!
+
+  function showError(message: string) {
+    errorMsg.textContent = message
+    errorMsg.classList.remove('hidden')
+  }
+
+  function showSuccess(message: string) {
+    successMsg.textContent = message
+    successMsg.classList.remove('hidden')
+  }
+
+  const { data: sessionData } = await supabase.auth.getSession()
+  if (!sessionData.session) {
+    window.location.href = '/login'
+  }
+
+  registerPasskeyBtn.addEventListener('click', async () => {
+    errorMsg.classList.add('hidden')
+    successMsg.classList.add('hidden')
+    registerPasskeyBtn.disabled = true
+    registerPasskeyBtn.textContent = 'Waiting for passkey…'
+
+    try {
+      const friendlyName = (document.getElementById('passkey-name') as HTMLInputElement).value
+      const { error } = await registerCurrentUserPasskey(friendlyName)
+
+      if (error) {
+        showError(error.message)
+        return
+      }
+
+      showSuccess('Passkey registered.')
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Passkey registration failed.'))
+    } finally {
+      registerPasskeyBtn.disabled = false
+      registerPasskeyBtn.textContent = 'Register Passkey'
+    }
+  })
+</script>

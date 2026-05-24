@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+frontend/bun.lock
+
+# Environment files
+.env
+backend/.env
+frontend/.env
+!.env.example
+!backend/.env.example
+
+# Build output
+frontend/dist/
+
+# Database
+*.db
+
+# Supabase temp files
+supabase/.temp/
+
+# Solo task tracker
+.solo/
+
+# Test results
+frontend/test-results/
+
+# OS files
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# PRD doc (large binary)
+vinyl_collection_prd_mvp_adr_v2.docx
+
+# Specs (working docs, not source)
+specs/
+.github/

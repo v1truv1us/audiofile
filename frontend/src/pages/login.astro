@@ -46,6 +46,7 @@ import Layout from '../layouts/Layout.astro';
 </Layout>
 
 <script>
+  import { getErrorMessage, signInWithPasskey } from '../lib/passkeys'
   import { supabase } from '../lib/supabase'
 
   const errorMsg = document.getElementById('error-msg')!
@@ -87,19 +88,15 @@ import Layout from '../layouts/Layout.astro';
     passkeyBtn.textContent = 'Waiting for passkey…'
 
     try {
-      // Step 1: get challenge from Supabase
-      const { data: startData, error: startError } = await (supabase.auth as any).passkey.startAuthentication()
-      if (startError) { showError(startError.message); return }
+      const { error } = await signInWithPasskey()
 
-      // Step 2: verify the passkey credential with Supabase
-      const { error: verifyError } = await (supabase.auth as any).passkey.verifyAuthentication(startData)
-      if (verifyError) {
-        showError(verifyError.message)
+      if (error) {
+        showError(error.message)
       } else {
         window.location.href = '/'
       }
-    } catch (e: any) {
-      showError(e.message || 'Passkey sign-in failed.')
+    } catch (error: unknown) {
+      showError(getErrorMessage(error, 'Passkey sign-in failed.'))
     } finally {
       passkeyBtn.disabled = false
       passkeyBtn.textContent = 'Sign in with Passkey'

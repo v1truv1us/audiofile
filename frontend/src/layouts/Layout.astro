@@ -1,0 +1,126 @@
+---
+import '../styles/global.css';
+
+interface Props { title: string; authRequired?: boolean; }
+const { title, authRequired = true } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} | CrateKeeper</title>
+    <script is:inline>
+      // Production: API is same origin at /api/* (Go serves both).
+      // Dev: API runs on port 8080, frontend on 4321.
+      window.__API_BASE__ = window.__API_BASE__ ||
+        (location.port ? location.protocol + '//' + location.hostname + ':8080' : '');
+    </script>
+  </head>
+  <body class="bg-cream text-espresso min-h-screen flex flex-col">
+    <nav class="bg-espresso px-4 sm:px-6 py-4 flex items-center justify-between relative">
+      <div>
+        <a href="/" class="flex items-center gap-3 group">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="11" stroke="#FAC775" stroke-width="1"/>
+            <circle cx="12" cy="12" r="8.5" stroke="#FAC775" stroke-width="0.6" opacity="0.5"/>
+            <circle cx="12" cy="12" r="6" stroke="#FAC775" stroke-width="0.6" opacity="0.4"/>
+            <circle cx="12" cy="12" r="3.5" stroke="#FAC775" stroke-width="0.6" opacity="0.35"/>
+            <circle cx="12" cy="12" r="1.2" fill="#FAC775"/>
+          </svg>
+          <div>
+            <div class="font-serif text-gold text-xl leading-none tracking-wide">CrateKeeper</div>
+            <div class="text-gold-mid text-[9px] tracking-[0.18em] uppercase mt-0.5 opacity-75 hidden sm:block">Est. Your Collection</div>
+          </div>
+        </a>
+      </div>
+
+      <!-- Mobile menu button -->
+      <button
+        id="menu-toggle"
+        class="sm:hidden text-gold p-1"
+        aria-label="Toggle menu"
+        aria-expanded="false"
+      >
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M3 5h14v1.5H3V5zm0 4.25h14v1.5H3v-1.5zm0 4.25h14v1.5H3v-1.5z"/>
+        </svg>
+      </button>
+
+      <!-- Desktop nav -->
+      <div class="hidden sm:flex gap-6 items-center">
+        <a href="/collection" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Collection</a>
+        <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Wishlist</a>
+        <a href="/account" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Account</a>
+        <a href="/login" class="text-xs tracking-[0.08em] uppercase bg-gold text-espresso font-medium px-4 py-1.5 rounded hover:bg-gold-mid transition-colors">Sign in</a>
+      </div>
+
+      <!-- Mobile nav dropdown -->
+      <div id="mobile-menu" class="hidden absolute top-full left-0 right-0 bg-espresso border-t border-gold/20 sm:hidden z-10">
+        <div class="flex flex-col gap-1 px-4 py-3">
+          <a href="/collection" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Collection</a>
+          <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Wishlist</a>
+          <a href="/account" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Account</a>
+          <a href="/login" class="text-gold text-xs tracking-[0.08em] uppercase py-2">Sign in</a>
+        </div>
+      </div>
+    </nav>
+    <main class="flex-1 px-4 sm:px-6 py-6 sm:py-8 max-w-5xl mx-auto w-full">
+      <slot />
+    </main>
+    <footer class="bg-espresso px-4 sm:px-6 py-4 flex items-center justify-between">
+      <span class="text-gold text-[10px] tracking-[0.1em] uppercase opacity-50">CrateKeeper · Private Collection</span>
+      <span class="text-[10px] text-gold-mid opacity-50 tracking-wide hidden sm:inline">Built for serious diggers</span>
+    </footer>
+  </body>
+
+  <script>
+    const toggle = document.getElementById('menu-toggle');
+    const menu = document.getElementById('mobile-menu');
+    toggle?.addEventListener('click', () => {
+      const open = menu?.classList.toggle('hidden') === false;
+      toggle.setAttribute('aria-expanded', String(open));
+    });
+  </script>
+
+  <script>
+    import { supabase } from '../lib/supabase'
+
+    // Auth guard: redirect to login if not signed in (client-side check)
+    const publicPages = ['/login', '/signup']
+    const currentPath = window.location.pathname
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session && !publicPages.includes(currentPath)) {
+        window.location.href = '/login'
+        return
+      }
+      if (session && publicPages.includes(currentPath)) {
+        window.location.href = '/'
+        return
+      }
+
+      // Update nav: sign in → sign out when authenticated
+      const signInLinks = document.querySelectorAll<HTMLAnchorElement>('a[href="/login"]')
+      if (session?.user) {
+        signInLinks.forEach((signInLink) => {
+          signInLink.textContent = 'Sign out'
+          signInLink.href = '#'
+          signInLink.addEventListener('click', async (e) => {
+            e.preventDefault()
+            await supabase.auth.signOut()
+            window.location.href = '/login'
+          })
+        })
+      }
+    })
+
+    // Listen for auth state changes (e.g. session expiry)
+    supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        window.location.href = '/login'
+      }
+    })
+  </script>
+</html>
