@@ -1,7 +1,7 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -9,34 +9,29 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	_ "modernc.org/sqlite"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/v1truv1us/record-keeper/backend/internal/collection"
-	"github.com/v1truv1us/record-keeper/backend/internal/seed"
 	"github.com/v1truv1us/record-keeper/backend/internal/wishlist"
 )
 
 func main() {
-	dbPath := os.Getenv("DATABASE_PATH")
-	if dbPath == "" {
-		dbPath = "./cratekeeper.db"
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = "postgres://postgres:postgres@localhost:54322/postgres"
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_foreign_keys=on")
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		log.Fatalf("failed to open database: %v", err)
+		log.Fatalf("failed to connect to database: %v", err)
 	}
-	defer db.Close()
+	defer pool.Close()
 
-	schemaPath := os.Getenv("SCHEMA_PATH")
-	if schemaPath == "" {
-		schemaPath = "internal/db/schema.sql"
+	if err := pool.Ping(ctx); err != nil {
+		log.Fatalf("failed to ping database: %v", err)
 	}
-	if err := applySchema(db, schemaPath); err != nil {
-		log.Fatalf("failed to apply schema: %v", err)
-	}
-
-	seed.Seed(db)
+	log.Println("Connected to Postgres")
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -48,20 +43,24 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"status":  "ok",
-			"version": "0.1.0",
+			"version": "0.2.0",
 		})
 	})
 
-	r.Mount("/api/collection", collection.NewHandler(db).Routes())
-	r.Mount("/api/wishlist", wishlist.NewHandler(db).Routes())
+	r.Mount("/api/collection", collection.NewHandler(pool).Routes())
+	r.Mount("/api/wishlist", wishlist.NewHandler(pool).Routes())
 
+	host := os.Getenv("HOST")
+	if host == "" {
+		host = "0.0.0.0"
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	log.Printf("CrateKeeper API listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, r); err != nil {
+	log.Printf("CrateKeeper API listening on %s:%s", host, port)
+	if err := http.ListenAndServe(host+":"+port, r); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
@@ -77,13 +76,4 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func applySchema(db *sql.DB, path string) error {
-	schema, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(string(schema))
-	return err
 }

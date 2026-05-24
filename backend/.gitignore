@@ -1,2 +1,2 @@
-cratekeeper.db*
 /server
+.env

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import WishlistRow from './WishlistRow.svelte';
+	import { apiUrl } from '../lib/api';
 
 	type ApiItem = {
 		id: string;
@@ -17,7 +18,7 @@
 	async function fetchWishlist() {
 		loading = true;
 		try {
-			const res = await fetch('http://localhost:8080/api/wishlist');
+			const res = await fetch(apiUrl('/api/wishlist'));
 			items = await res.json();
 		} catch (e) {
 			console.error('Failed to fetch wishlist', e);

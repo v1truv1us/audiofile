@@ -1,5 +1,6 @@
 <script lang="ts">
 	import RecordCard, { labelThemeFor } from './RecordCard.svelte';
+	import { apiUrl } from '../lib/api';
 
 	type ApiItem = {
 		id: string;
@@ -24,7 +25,7 @@
 		loading = true;
 		try {
 			const sortParam = sort === 'artist' ? 'artist' : sort === 'year' ? 'year' : sort === 'condition' ? 'condition' : '';
-			const res = await fetch(`http://localhost:8080/api/collection?sort=${sortParam}`);
+			const res = await fetch(apiUrl(`/api/collection?sort=${sortParam}`));
 			items = await res.json();
 		} catch (e) {
 			console.error('Failed to fetch collection', e);

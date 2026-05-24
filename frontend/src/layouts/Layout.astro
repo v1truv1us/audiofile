@@ -10,6 +10,9 @@ const { title } = Astro.props;
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title} | CrateKeeper</title>
+    <script is:inline>
+      window.__API_BASE__ = window.__API_BASE__ || (location.protocol + '//' + location.hostname + ':8080');
+    </script>
   </head>
   <body class="bg-cream text-espresso min-h-screen flex flex-col">
     <nav class="bg-espresso px-4 sm:px-6 py-4 flex items-center justify-between relative">

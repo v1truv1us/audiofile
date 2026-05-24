@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { apiUrl } from '../lib/api';
+
 	type Stats = {
 		collectionCount: number;
 		forSaleCount: number;
@@ -14,8 +16,8 @@
 		loading = true;
 		try {
 			const [statsRes, collectionRes] = await Promise.all([
-				fetch('http://localhost:8080/api/collection/stats'),
-				fetch('http://localhost:8080/api/collection?limit=3'),
+				fetch(apiUrl('/api/collection/stats')),
+				fetch(apiUrl('/api/collection?limit=3')),
 			]);
 			stats = await statsRes.json();
 			recent = await collectionRes.json();

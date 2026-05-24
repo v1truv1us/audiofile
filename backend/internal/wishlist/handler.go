@@ -1,12 +1,12 @@
 package wishlist
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type WishlistItem struct {
@@ -20,11 +20,11 @@ type WishlistItem struct {
 }
 
 type Handler struct {
-	db *sql.DB
+	pool *pgxpool.Pool
 }
 
-func NewHandler(db *sql.DB) *Handler {
-	return &Handler{db: db}
+func NewHandler(pool *pgxpool.Pool) *Handler {
+	return &Handler{pool: pool}
 }
 
 func (h *Handler) Routes() chi.Router {
@@ -39,15 +39,15 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	rows, err := h.db.Query(`
-		SELECT w.id, w.priority, w.target_price, w.pressing_notes,
+	rows, err := h.pool.Query(r.Context(), `
+		SELECT w.id::text, w.priority, w.target_price, w.pressing_notes,
 		       COALESCE(r.title, w.manual_title, '') AS title,
 		       COALESCE(r.artist, w.manual_artist, '') AS artist,
 		       COALESCE(r.label, '') AS label
-		FROM wishlist_items w
-		LEFT JOIN releases r ON r.id = w.release_id
+		FROM public.wishlist_items w
+		LEFT JOIN public.releases r ON r.id = w.release_id
 		ORDER BY w.priority ASC, w.created_at DESC
-		LIMIT ?`, limit)
+		LIMIT $1`, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -57,8 +57,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	items := []WishlistItem{}
 	for rows.Next() {
 		var it WishlistItem
-		var price sql.NullFloat64
-		var notes sql.NullString
+		var price *float64
+		var notes *string
 
 		if err := rows.Scan(
 			&it.ID, &it.Priority, &price, &notes,
@@ -68,10 +68,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if price.Valid {
-			it.TargetPrice = &price.Float64
+		it.TargetPrice = price
+		if notes != nil {
+			it.Notes = *notes
 		}
-		it.Notes = notes.String
 		items = append(items, it)
 	}
 
