@@ -12,7 +12,7 @@ const { title } = Astro.props;
     <title>{title} | CrateKeeper</title>
   </head>
   <body class="bg-cream text-espresso min-h-screen flex flex-col">
-    <nav class="bg-espresso px-6 py-4 flex items-center justify-between">
+    <nav class="bg-espresso px-4 sm:px-6 py-4 flex items-center justify-between relative">
       <div>
         <a href="/" class="flex items-center gap-3 group">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -24,22 +24,54 @@ const { title } = Astro.props;
           </svg>
           <div>
             <div class="font-serif text-gold text-xl leading-none tracking-wide">CrateKeeper</div>
-            <div class="text-gold-mid text-[9px] tracking-[0.18em] uppercase mt-0.5 opacity-75">Est. Your Collection</div>
+            <div class="text-gold-mid text-[9px] tracking-[0.18em] uppercase mt-0.5 opacity-75 hidden sm:block">Est. Your Collection</div>
           </div>
         </a>
       </div>
-      <div class="flex gap-6 items-center">
+
+      <!-- Mobile menu button -->
+      <button
+        id="menu-toggle"
+        class="sm:hidden text-gold p-1"
+        aria-label="Toggle menu"
+        aria-expanded="false"
+      >
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M3 5h14v1.5H3V5zm0 4.25h14v1.5H3v-1.5zm0 4.25h14v1.5H3v-1.5z"/>
+        </svg>
+      </button>
+
+      <!-- Desktop nav -->
+      <div class="hidden sm:flex gap-6 items-center">
         <a href="/collection" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Collection</a>
         <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Wishlist</a>
         <a href="/login" class="text-xs tracking-[0.08em] uppercase bg-gold text-espresso font-medium px-4 py-1.5 rounded hover:bg-gold-mid transition-colors">Sign in</a>
       </div>
+
+      <!-- Mobile nav dropdown -->
+      <div id="mobile-menu" class="hidden absolute top-full left-0 right-0 bg-espresso border-t border-gold/20 sm:hidden z-10">
+        <div class="flex flex-col gap-1 px-4 py-3">
+          <a href="/collection" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Collection</a>
+          <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Wishlist</a>
+          <a href="/login" class="text-gold text-xs tracking-[0.08em] uppercase py-2">Sign in</a>
+        </div>
+      </div>
     </nav>
-    <main class="flex-1 px-6 py-8 max-w-5xl mx-auto w-full">
+    <main class="flex-1 px-4 sm:px-6 py-6 sm:py-8 max-w-5xl mx-auto w-full">
       <slot />
     </main>
-    <footer class="bg-espresso px-6 py-4 flex items-center justify-between">
+    <footer class="bg-espresso px-4 sm:px-6 py-4 flex items-center justify-between">
       <span class="text-gold text-[10px] tracking-[0.1em] uppercase opacity-50">CrateKeeper · Private Collection</span>
-      <span class="text-[10px] text-gold-mid opacity-50 tracking-wide">Built for serious diggers</span>
+      <span class="text-[10px] text-gold-mid opacity-50 tracking-wide hidden sm:inline">Built for serious diggers</span>
     </footer>
   </body>
+
+  <script>
+    const toggle = document.getElementById('menu-toggle');
+    const menu = document.getElementById('mobile-menu');
+    toggle?.addEventListener('click', () => {
+      const open = menu?.classList.toggle('hidden') === false;
+      toggle.setAttribute('aria-expanded', String(open));
+    });
+  </script>
 </html>

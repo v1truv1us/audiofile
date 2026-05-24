@@ -9,7 +9,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
+
+	"github.com/v1truv1us/record-keeper/backend/internal/collection"
+	"github.com/v1truv1us/record-keeper/backend/internal/seed"
+	"github.com/v1truv1us/record-keeper/backend/internal/wishlist"
 )
 
 func main() {
@@ -18,7 +22,7 @@ func main() {
 		dbPath = "./cratekeeper.db"
 	}
 
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=on")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_foreign_keys=on")
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
@@ -32,10 +36,13 @@ func main() {
 		log.Fatalf("failed to apply schema: %v", err)
 	}
 
+	seed.Seed(db)
+
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
+	r.Use(corsMiddleware)
 
 	r.Get("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -44,6 +51,9 @@ func main() {
 			"version": "0.1.0",
 		})
 	})
+
+	r.Mount("/api/collection", collection.NewHandler(db).Routes())
+	r.Mount("/api/wishlist", wishlist.NewHandler(db).Routes())
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -54,6 +64,19 @@ func main() {
 	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func applySchema(db *sql.DB, path string) error {
