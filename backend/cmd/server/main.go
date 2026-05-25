@@ -61,12 +61,12 @@ func main() {
 				"version": "0.2.0",
 			})
 		})
+		r.Mount("/releases", releases.NewHandler().Routes())
 
 		// Authenticated routes
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(supabaseURL))
 			r.Mount("/collection", collection.NewHandler(pool).Routes())
-			r.Mount("/releases", releases.NewHandler().Routes())
 			r.Mount("/wishlist", wishlist.NewHandler(pool).Routes())
 		})
 	})
