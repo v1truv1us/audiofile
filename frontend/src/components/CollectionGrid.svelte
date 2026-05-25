@@ -48,7 +48,8 @@
 	let releaseResults: ReleaseSearchResult[] = $state([]);
 	let searching = $state(false);
 	let scanning = $state(false);
-	let scanImage: File | null = $state(null);
+	let barcode = $state('');
+	let barcodeImage: File | null = $state(null);
 
 	async function searchReleases() {
 		const q = releaseQuery.trim() || [form.title, form.artist].filter(Boolean).join(' ');
@@ -69,23 +70,40 @@
 		}
 	}
 
-	async function scanRecord() {
-		if (!scanImage) {
-			error = 'Choose a record photo to scan.';
-			return;
+	async function readBarcodeFromImage(file: File): Promise<string> {
+		const detectorClass = (window as typeof window & { BarcodeDetector?: new (options?: { formats?: string[] }) => { detect(image: ImageBitmap): Promise<Array<{ rawValue: string }>> } }).BarcodeDetector;
+		if (!detectorClass) throw new Error('Barcode scanning is not supported in this browser. Enter the barcode manually.');
+		const detector = new detectorClass({ formats: ['ean_13', 'upc_a', 'upc_e'] });
+		const image = await createImageBitmap(file);
+		try {
+			const codes = await detector.detect(image);
+			return codes[0]?.rawValue ?? '';
+		} finally {
+			image.close();
 		}
+	}
+
+	async function scanBarcode() {
 		scanning = true;
 		error = '';
 		try {
-			const data = new FormData();
-			data.set('image', scanImage);
-			const res = await apiFetch('/api/releases/scan', { method: 'POST', body: data });
+			const scannedBarcode = barcode.trim() || (barcodeImage ? await readBarcodeFromImage(barcodeImage) : '');
+			if (!scannedBarcode) {
+				error = 'Scan or enter a barcode.';
+				return;
+			}
+			const res = await apiFetch('/api/releases/scan', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ barcode: scannedBarcode }),
+			});
 			if (!res.ok) throw new Error(await res.text());
-			const scan: { query: string; results: ReleaseSearchResult[] } = await res.json();
-			releaseQuery = scan.query;
+			const scan: { barcode: string; results: ReleaseSearchResult[] } = await res.json();
+			barcode = scan.barcode;
+			releaseQuery = scan.barcode;
 			releaseResults = scan.results;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to scan record';
+			error = e instanceof Error ? e.message : 'Failed to scan barcode';
 		} finally {
 			scanning = false;
 		}
@@ -199,8 +217,9 @@
 	{#if showAddForm}
 		<div class="bg-white border border-gold/50 rounded-lg p-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
 			<div class="sm:col-span-2">
-				<label class="text-xs text-gold-dark uppercase tracking-wide">Scan record photo<input type="file" accept="image/*" capture="environment" class="mt-1 w-full border border-gold/40 rounded px-3 py-2 text-espresso normal-case" on:change={(e) => scanImage = e.currentTarget.files?.[0] ?? null} /></label>
-				<button type="button" disabled={scanning} class="mt-2 text-xs border border-espresso/30 text-espresso px-3 py-1.5 rounded disabled:opacity-60" on:click={scanRecord}>{scanning ? 'Scanning...' : 'Scan record'}</button>
+				<label class="text-xs text-gold-dark uppercase tracking-wide">Scan barcode photo<input type="file" accept="image/*" capture="environment" class="mt-1 w-full border border-gold/40 rounded px-3 py-2 text-espresso normal-case" on:change={(e) => barcodeImage = e.currentTarget.files?.[0] ?? null} /></label>
+				<label class="mt-2 block text-xs text-gold-dark uppercase tracking-wide">Or enter barcode<input class="mt-1 w-full border border-gold/40 rounded px-3 py-2 text-espresso normal-case" inputmode="numeric" placeholder="018771210510" bind:value={barcode} /></label>
+				<button type="button" disabled={scanning} class="mt-2 text-xs border border-espresso/30 text-espresso px-3 py-1.5 rounded disabled:opacity-60" on:click={scanBarcode}>{scanning ? 'Scanning...' : 'Scan barcode'}</button>
 			</div>
 			<div class="sm:col-span-2">
 				<label class="text-xs text-gold-dark uppercase tracking-wide">Search releases<input class="mt-1 w-full border border-gold/40 rounded px-3 py-2 text-espresso normal-case" placeholder="Kind of Blue Miles Davis" bind:value={releaseQuery} /></label>

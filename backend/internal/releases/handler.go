@@ -2,11 +2,9 @@ package releases
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,8 +23,6 @@ type Handler struct {
 	discogsURL     string
 	discogsKey     string
 	discogsSecret  string
-	visionURL      string
-	visionKey      string
 }
 
 type SearchResult struct {
@@ -82,8 +78,6 @@ func NewHandler() *Handler {
 		discogsURL:     "https://api.discogs.com",
 		discogsKey:     os.Getenv("DISCOGS_CONSUMER_KEY"),
 		discogsSecret:  os.Getenv("DISCOGS_CONSUMER_SECRET"),
-		visionURL:      "https://api.openai.com",
-		visionKey:      os.Getenv("OPENAI_API_KEY"),
 	}
 }
 
@@ -121,35 +115,23 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
-	if h.visionKey == "" {
-		http.Error(w, "record scanning is not configured", http.StatusServiceUnavailable)
+	var payload struct {
+		Barcode string `json:"barcode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "barcode is required", http.StatusBadRequest)
 		return
 	}
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		http.Error(w, "image is required", http.StatusBadRequest)
+	barcode := cleanBarcode(payload.Barcode)
+	if barcode == "" {
+		http.Error(w, "barcode is required", http.StatusBadRequest)
 		return
 	}
-	file, header, err := r.FormFile("image")
-	if err != nil {
-		http.Error(w, "image is required", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-	image, err := io.ReadAll(io.LimitReader(file, 6<<20))
-	if err != nil || len(image) == 0 {
-		http.Error(w, "image is required", http.StatusBadRequest)
-		return
-	}
-
-	query, ok := h.extractScanQuery(w, r, image, header.Header.Get("Content-Type"))
+	results, ok := h.searchDiscogsBarcode(w, r, barcode)
 	if !ok {
 		return
 	}
-	results, ok := h.searchResults(w, r, query)
-	if !ok {
-		return
-	}
-	writeJSON(w, map[string]any{"query": query, "results": results})
+	writeJSON(w, map[string]any{"barcode": barcode, "results": results})
 }
 
 func (h *Handler) searchResults(w http.ResponseWriter, r *http.Request, q string) ([]SearchResult, bool) {
@@ -166,65 +148,20 @@ func (h *Handler) searchResults(w http.ResponseWriter, r *http.Request, q string
 	return h.searchMusicBrainz(w, r, q)
 }
 
-func (h *Handler) extractScanQuery(w http.ResponseWriter, r *http.Request, image []byte, contentType string) (string, bool) {
-	if contentType == "" {
-		contentType = "image/jpeg"
-	}
-	payload := map[string]any{
-		"model": "gpt-4o-mini",
-		"messages": []map[string]any{{
-			"role": "user",
-			"content": []map[string]any{
-				{"type": "text", "text": "Read this vinyl record cover or label. Return only the best Discogs search query as artist and title. If unsure, return the visible text."},
-				{"type": "image_url", "image_url": map[string]string{"url": "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(image)}},
-			},
-		}},
-		"max_tokens": 40,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return "", false
-	}
-	visionBase := strings.TrimRight(h.visionURL, "/")
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, visionBase+"/v1/chat/completions", strings.NewReader(string(body)))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return "", false
-	}
-	req.Header.Set("Authorization", "Bearer "+h.visionKey)
-	req.Header.Set("Content-Type", "application/json")
-	res, err := h.client.Do(req)
-	if err != nil {
-		http.Error(w, "record scan is unavailable. Try search instead.", http.StatusBadGateway)
-		return "", false
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		http.Error(w, "record scan failed. Try search instead.", http.StatusBadGateway)
-		return "", false
-	}
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil || len(out.Choices) == 0 {
-		http.Error(w, "record scan returned no text. Try search instead.", http.StatusBadGateway)
-		return "", false
-	}
-	query := strings.TrimSpace(out.Choices[0].Message.Content)
-	if query == "" {
-		http.Error(w, "record scan returned no text. Try search instead.", http.StatusBadGateway)
-		return "", false
-	}
-	return query, true
+func (h *Handler) searchDiscogs(w http.ResponseWriter, r *http.Request, q string) ([]SearchResult, bool) {
+	return h.searchDiscogsWithParam(w, r, "q", q)
 }
 
-func (h *Handler) searchDiscogs(w http.ResponseWriter, r *http.Request, q string) ([]SearchResult, bool) {
-	reqURL := h.discogsURL + "/database/search?type=release&per_page=8&q=" + url.QueryEscape(q) + "&key=" + url.QueryEscape(h.discogsKey) + "&secret=" + url.QueryEscape(h.discogsSecret)
+func (h *Handler) searchDiscogsBarcode(w http.ResponseWriter, r *http.Request, barcode string) ([]SearchResult, bool) {
+	return h.searchDiscogsWithParam(w, r, "barcode", barcode)
+}
+
+func (h *Handler) searchDiscogsWithParam(w http.ResponseWriter, r *http.Request, param string, value string) ([]SearchResult, bool) {
+	if h.discogsKey == "" || h.discogsSecret == "" {
+		http.Error(w, "barcode scanning requires Discogs credentials", http.StatusServiceUnavailable)
+		return nil, false
+	}
+	reqURL := h.discogsURL + "/database/search?type=release&per_page=8&" + param + "=" + url.QueryEscape(value) + "&key=" + url.QueryEscape(h.discogsKey) + "&secret=" + url.QueryEscape(h.discogsSecret)
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, reqURL, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -321,6 +258,16 @@ func cacheResults(key string, results []SearchResult, now time.Time) {
 	searchCache.Lock()
 	searchCache.items[key] = searchCacheEntry{results: results, expires: now.Add(12 * time.Hour)}
 	searchCache.Unlock()
+}
+
+func cleanBarcode(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func splitDiscogsTitle(value string) (string, string) {

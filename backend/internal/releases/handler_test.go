@@ -1,8 +1,6 @@
 package releases
 
 import (
-	"bytes"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,40 +27,27 @@ func TestRoutesRegistersScan(t *testing.T) {
 
 	h.Routes().ServeHTTP(res, req)
 
-	if res.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, res.Code)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
 	}
 }
 
-func TestScanExtractsQueryAndSearchesDiscogs(t *testing.T) {
+func TestScanSearchesDiscogsByBarcode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/v1/chat/completions":
-			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Sublime 40oz. To Freedom"}}]}`))
-		case "/database/search":
-			if got := r.URL.Query().Get("q"); got != "Sublime 40oz. To Freedom" {
-				t.Fatalf("expected Discogs query from scan, got %q", got)
-			}
-			_, _ = w.Write([]byte(`{"results":[{"id":777,"title":"Sublime - 40oz. To Freedom","year":1992,"label":["Skunk Records"],"cover_image":"https://img.example/sublime.jpg"}]}`))
-		default:
-			t.Fatalf("unexpected path %q", r.URL.Path)
+		if r.URL.Path != "/database/search" {
+			t.Fatalf("expected Discogs search path, got %q", r.URL.Path)
 		}
+		if got := r.URL.Query().Get("barcode"); got != "018771210510" {
+			t.Fatalf("expected barcode query, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"id":777,"title":"Sublime - 40oz. To Freedom","year":1992,"label":["Skunk Records"],"cover_image":"https://img.example/sublime.jpg"}]}`))
 	}))
 	defer server.Close()
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("image", "cover.jpg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = part.Write([]byte("fake image"))
-	_ = writer.Close()
-
-	h := &Handler{client: server.Client(), visionURL: server.URL, visionKey: "key", discogsURL: server.URL, discogsKey: "discogs-key", discogsSecret: "discogs-secret"}
-	req := httptest.NewRequest(http.MethodPost, "/scan", &body)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	h := &Handler{client: server.Client(), discogsURL: server.URL, discogsKey: "discogs-key", discogsSecret: "discogs-secret"}
+	req := httptest.NewRequest(http.MethodPost, "/scan", strings.NewReader(`{"barcode":"018771210510"}`))
+	req.Header.Set("Content-Type", "application/json")
 	res := httptest.NewRecorder()
 
 	h.scan(res, req)
@@ -70,22 +55,22 @@ func TestScanExtractsQueryAndSearchesDiscogs(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, res.Code, res.Body.String())
 	}
-	for _, want := range []string{"Sublime 40oz. To Freedom", "40oz. To Freedom", "Skunk Records", "https://img.example/sublime.jpg"} {
+	for _, want := range []string{"018771210510", "40oz. To Freedom", "Skunk Records", "https://img.example/sublime.jpg"} {
 		if !strings.Contains(res.Body.String(), want) {
 			t.Fatalf("expected scan response to contain %q, got %q", want, res.Body.String())
 		}
 	}
 }
 
-func TestScanRequiresVisionKey(t *testing.T) {
+func TestScanRequiresBarcode(t *testing.T) {
 	h := &Handler{}
-	req := httptest.NewRequest(http.MethodPost, "/scan", strings.NewReader("bad"))
+	req := httptest.NewRequest(http.MethodPost, "/scan", strings.NewReader(`{}`))
 	res := httptest.NewRecorder()
 
 	h.scan(res, req)
 
-	if res.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, res.Code)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
 	}
 }
 
