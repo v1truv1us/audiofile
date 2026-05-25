@@ -51,11 +51,11 @@ const { title, authRequired = true } = Astro.props;
       </button>
 
       <!-- Desktop nav -->
-      <div class="hidden sm:flex gap-6 items-center">
+      <div class="hidden sm:flex gap-6 items-center" id="nav-links">
         <a href="/collection" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Collection</a>
         <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Wishlist</a>
         <a href="/account" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Account</a>
-        <a href="/login" class="text-xs tracking-[0.08em] uppercase bg-gold text-espresso font-medium px-4 py-1.5 rounded hover:bg-gold-mid transition-colors">Sign in</a>
+        <a href="/login" id="nav-signin" class="text-xs tracking-[0.08em] uppercase bg-gold text-espresso font-medium px-4 py-1.5 rounded hover:bg-gold-mid transition-colors">Sign in</a>
       </div>
 
       <!-- Mobile nav dropdown -->
@@ -64,7 +64,7 @@ const { title, authRequired = true } = Astro.props;
           <a href="/collection" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Collection</a>
           <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Wishlist</a>
           <a href="/account" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Account</a>
-          <a href="/login" class="text-gold text-xs tracking-[0.08em] uppercase py-2">Sign in</a>
+          <a href="/login" id="mobile-signin" class="text-gold text-xs tracking-[0.08em] uppercase py-2">Sign in</a>
         </div>
       </div>
     </nav>
@@ -90,7 +90,7 @@ const { title, authRequired = true } = Astro.props;
     import { supabase } from '../lib/supabase'
 
     // Auth guard: redirect to login if not signed in (client-side check)
-    const publicPages = ['/login', '/signup']
+    const publicPages = ['/login', '/signup', '/login/', '/signup/']
     const currentPath = window.location.pathname
 
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -104,11 +104,13 @@ const { title, authRequired = true } = Astro.props;
       }
 
       // Update nav: sign in → sign out when authenticated
-      const signInLinks = document.querySelectorAll<HTMLAnchorElement>('a[href="/login"]')
+      const signInLinks = document.querySelectorAll<HTMLAnchorElement>('#nav-signin, #mobile-signin')
       if (session?.user) {
         signInLinks.forEach((signInLink) => {
           signInLink.textContent = 'Sign out'
           signInLink.href = '#'
+          signInLink.classList.remove('bg-gold', 'text-espresso')
+          signInLink.classList.add('text-gold')
           signInLink.addEventListener('click', async (e) => {
             e.preventDefault()
             await supabase.auth.signOut()
