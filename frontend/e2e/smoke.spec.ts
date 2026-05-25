@@ -49,4 +49,21 @@ test.describe('Smoke — production site', () => {
 		const body = await resp.json();
 		expect(body.status).toBe('ok');
 	});
+
+	test('release search endpoint is available', async ({ request }) => {
+		const resp = await request.get(`${BASE}/api/releases/search?q=kind%20of%20blue%20miles%20davis`);
+		expect(resp.status()).toBe(200);
+		const body = await resp.json();
+		expect(Array.isArray(body)).toBe(true);
+	});
+
+	test('barcode scan endpoint is available', async ({ request }) => {
+		const resp = await request.post(`${BASE}/api/releases/scan`, {
+			data: { barcode: '018771210510' },
+		});
+		expect(resp.status()).toBe(200);
+		const body = await resp.json();
+		expect(body.barcode).toBe('018771210510');
+		expect(Array.isArray(body.results)).toBe(true);
+	});
 });
