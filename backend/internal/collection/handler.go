@@ -383,7 +383,7 @@ func findCoverURL(ctx context.Context, title, artist string) *string {
 	if err != nil {
 		return nil
 	}
-	req.Header.Set("User-Agent", "CrateKeeper/0.2.0 (https://github.com/v1truv1us/cratekeeper)")
+	req.Header.Set("User-Agent", "AudioFile/0.2.0 (https://github.com/v1truv1us/record-keeper)")
 
 	res, err := coverHTTPClient.Do(req)
 	if err != nil || res.StatusCode != http.StatusOK {

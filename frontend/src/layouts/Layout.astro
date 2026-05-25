@@ -12,7 +12,7 @@ const { title, authRequired = true } = Astro.props;
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" sizes="32x32" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>{title} | CrateKeeper</title>
+    <title>{title} | AudioFile</title>
     <script is:inline>
       // Production: API is same origin at /api/* (Go serves both).
       // Dev: API runs on port 8080, frontend on 4321.
@@ -32,8 +32,8 @@ const { title, authRequired = true } = Astro.props;
             <circle cx="12" cy="12" r="1.2" fill="#FAC775"/>
           </svg>
           <div>
-            <div class="font-serif text-gold text-xl leading-none tracking-wide">CrateKeeper</div>
-            <div class="text-gold-mid text-[9px] tracking-[0.18em] uppercase mt-0.5 opacity-75 hidden sm:block">Est. Your Collection</div>
+            <div class="font-serif text-gold text-xl leading-none tracking-wide">AudioFile</div>
+            <div class="text-gold-mid text-[9px] tracking-[0.18em] uppercase mt-0.5 opacity-75 hidden sm:block">Your Collection, Catalogued</div>
           </div>
         </a>
       </div>
@@ -72,7 +72,7 @@ const { title, authRequired = true } = Astro.props;
       <slot />
     </main>
     <footer class="bg-espresso px-4 sm:px-6 py-4 flex items-center justify-between">
-      <span class="text-gold text-[10px] tracking-[0.1em] uppercase opacity-50">CrateKeeper · Private Collection</span>
+      <span class="text-gold text-[10px] tracking-[0.1em] uppercase opacity-50">AudioFile · Your Vinyl Collection</span>
       <span class="text-[10px] text-gold-mid opacity-50 tracking-wide hidden sm:inline">Built for serious diggers</span>
     </footer>
   </body>

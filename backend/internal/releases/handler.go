@@ -132,7 +132,7 @@ func (h *Handler) searchDiscogs(w http.ResponseWriter, r *http.Request, q string
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil, false
 	}
-	req.Header.Set("User-Agent", "CrateKeeper/0.2.0 +https://crate-keeper.com")
+	req.Header.Set("User-Agent", "AudioFile/0.2.0 +https://audiofile.app")
 
 	res, err := h.client.Do(req)
 	if err != nil {
@@ -179,7 +179,7 @@ func (h *Handler) searchMusicBrainz(w http.ResponseWriter, r *http.Request, q st
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil, false
 	}
-	req.Header.Set("User-Agent", "CrateKeeper/0.2.0 (https://github.com/v1truv1us/cratekeeper)")
+	req.Header.Set("User-Agent", "AudioFile/0.2.0 (https://github.com/v1truv1us/record-keeper)")
 
 	res, err := h.client.Do(req)
 	if err != nil {

@@ -157,10 +157,10 @@
 	}
 
 	async function shareWishlist() {
-		const url = 'https://crate-keeper.com/wishlist';
+		const url = `${window.location.origin}/wishlist`;
 		try {
 			if (navigator.share) {
-				await navigator.share({ title: 'CrateKeeper Wishlist', text: 'Records I am hunting for on CrateKeeper', url });
+				await navigator.share({ title: 'AudioFile Wishlist', text: 'Records I am hunting for on AudioFile', url });
 				return;
 			}
 			await navigator.clipboard.writeText(url);

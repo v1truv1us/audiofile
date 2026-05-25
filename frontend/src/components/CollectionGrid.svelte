@@ -112,10 +112,10 @@
 	}
 
 	async function shareCollection() {
-		const url = 'https://crate-keeper.com/collection';
+		const url = `${window.location.origin}/collection`;
 		try {
 			if (navigator.share) {
-				await navigator.share({ title: 'CrateKeeper Collection', text: 'My vinyl collection on CrateKeeper', url });
+				await navigator.share({ title: 'AudioFile Collection', text: 'My vinyl collection on AudioFile', url });
 				return;
 			}
 			await navigator.clipboard.writeText(url);

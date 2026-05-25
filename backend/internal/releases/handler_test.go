@@ -201,7 +201,7 @@ func TestSearchReturnsBadGatewayForMusicBrainzInvalidJSON(t *testing.T) {
 
 func TestSearchParsesMusicBrainzResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("User-Agent"); !strings.Contains(got, "CrateKeeper") {
+		if got := r.Header.Get("User-Agent"); !strings.Contains(got, "AudioFile") {
 			t.Fatalf("expected CrateKeeper user agent, got %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
