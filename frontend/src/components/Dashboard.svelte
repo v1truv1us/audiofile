@@ -39,7 +39,7 @@
 
 <div class="space-y-10">
 	<div class="border-b border-gold-muted/30 pb-6">
-		<h1 class="font-serif text-4xl text-espresso mb-1 font-normal">Your Crates</h1>
+		<h1 class="font-serif text-4xl text-espresso mb-1 font-normal">Your Collection</h1>
 		<p class="text-gold-dark text-xs tracking-[0.12em] uppercase">
 			{stats.collectionCount} pressings · {stats.wishlistCount} on the wishlist · {stats.forSaleCount} for sale
 		</p>

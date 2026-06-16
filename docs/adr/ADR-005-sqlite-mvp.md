@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-CrateKeeper is initially a single-user or small-household app. A full Postgres setup adds operational overhead that isn't justified at MVP scale.
+AudioFile is initially a single-user or small-household app. A full Postgres setup adds operational overhead that isn't justified at MVP scale.
 
 ## Decision
 Use SQLite (via go-sqlite3) for MVP with WAL mode and foreign keys enabled. Schema and queries will be written to be compatible with Postgres for future migration. No SQLite-specific functions will be used in business logic queries.

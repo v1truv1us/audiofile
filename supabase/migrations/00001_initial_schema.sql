@@ -1,4 +1,4 @@
--- CrateKeeper schema — Postgres (Supabase)
+-- AudioFile schema — Postgres (Supabase)
 -- Replaces SQLite schema from ADR-005
 
 -- Supabase provides auth.users; we reference it instead of rolling our own.

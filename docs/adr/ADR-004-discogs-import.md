@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Vinyl collectors overwhelmingly use Discogs for cataloging. CrateKeeper should support importing collection data from Discogs to reduce manual entry friction.
+Vinyl collectors overwhelmingly use Discogs for cataloging. AudioFile should support importing collection data from Discogs to reduce manual entry friction.
 
 ## Decision
 Support Discogs OAuth import flow in MVP+1. For MVP, allow manual entry with Discogs ID field for future matching. The releases table includes a discogs_id column for deduplication.

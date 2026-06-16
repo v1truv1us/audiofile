@@ -14,7 +14,7 @@ test.describe('Navigation', () => {
 
 		await page.click('a[href="/"]');
 		await expect(page).toHaveURL('/');
-		await expect(page.locator('text=Your Crates')).toBeVisible();
+		await expect(page.locator('text=Your Collection')).toBeVisible();
 	});
 
 	test('logo links back to dashboard from any page', async ({ page }) => {

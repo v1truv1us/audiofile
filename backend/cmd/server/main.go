@@ -18,10 +18,10 @@ import (
 	"github.com/getsentry/sentry-go"
 	sentryhttp "github.com/getsentry/sentry-go/http"
 
-	"github.com/v1truv1us/cratekeeper/backend/internal/auth"
-	"github.com/v1truv1us/cratekeeper/backend/internal/collection"
-	"github.com/v1truv1us/cratekeeper/backend/internal/releases"
-	"github.com/v1truv1us/cratekeeper/backend/internal/wishlist"
+	"github.com/v1truv1us/audiofile/backend/internal/auth"
+	"github.com/v1truv1us/audiofile/backend/internal/collection"
+	"github.com/v1truv1us/audiofile/backend/internal/releases"
+	"github.com/v1truv1us/audiofile/backend/internal/wishlist"
 )
 
 func main() {

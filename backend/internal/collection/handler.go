@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/v1truv1us/cratekeeper/backend/internal/auth"
+	"github.com/v1truv1us/audiofile/backend/internal/auth"
 )
 
 type Release struct {

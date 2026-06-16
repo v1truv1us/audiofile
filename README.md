@@ -59,7 +59,7 @@ See [docs/adr/](docs/adr/) for all architecture decisions.
 ## Project structure
 
 ```
-cratekeeper/
+audiofile/
 ├── backend/
 │   ├── cmd/server/        # Entry point
 │   ├── internal/

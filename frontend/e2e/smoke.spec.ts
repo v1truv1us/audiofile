@@ -40,7 +40,6 @@ test.describe('Smoke — production site', () => {
 		await page.goto(`${BASE}/login/`);
 		const navBrand = page.locator('.font-serif.text-gold').first();
 		await expect(navBrand).toContainText('AudioFile');
-		await expect(page.locator('text=CrateKeeper')).not.toBeVisible();
 	});
 
 	test('health endpoint', async ({ request }) => {

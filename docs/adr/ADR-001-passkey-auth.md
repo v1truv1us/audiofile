@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-CrateKeeper needs user authentication. Passkeys (WebAuthn) offer phishing-resistant, password-free auth with biometric convenience. However, passkey support varies by device/browser, requiring a fallback for older clients.
+AudioFile needs user authentication. Passkeys (WebAuthn) offer phishing-resistant, password-free auth with biometric convenience. However, passkey support varies by device/browser, requiring a fallback for older clients.
 
 ## Decision
 Implement WebAuthn passkeys as the primary authentication method, with email/password as fallback. Use the `go-webauthn/webauthn` library for the Go backend.

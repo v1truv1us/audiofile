@@ -1,4 +1,4 @@
-# CrateKeeper agent instructions
+# AudioFile agent instructions
 
 These rules apply to this repository.
 

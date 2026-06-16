@@ -1,4 +1,4 @@
-module github.com/v1truv1us/cratekeeper/backend
+module github.com/v1truv1us/audiofile/backend
 
 go 1.26.3
 
