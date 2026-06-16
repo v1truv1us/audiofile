@@ -2,12 +2,18 @@ package collection
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	pgxmock "github.com/pashagolub/pgxmock/v4"
+
+	"github.com/v1truv1us/audiofile/backend/internal/auth"
 )
 
 func TestRoutesRegistersCollectionEndpoints(t *testing.T) {
@@ -417,6 +423,442 @@ func TestBackfillCoversReturnsQueryErrors(t *testing.T) {
 	if res.Code != http.StatusInternalServerError {
 		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
 	}
+}
+
+func TestUpdateChangesCollectionItem(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").
+		WithArgs("item-1", "user-1").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectExec("UPDATE public.collection_items").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), "item-1", "user-1").
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPut, "/item-1", strings.NewReader(`{"mediaCondition":"NM","sleeveCondition":"VG+","purchasePrice":25.5,"notes":"clean","isForSale":true}`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.update(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "item-1") {
+		t.Fatalf("expected updated id, got %q", res.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateReturnsNotFoundWhenItemIsNotOwned(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnError(pgx.ErrNoRows)
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPut, "/item-1", strings.NewReader(`{"mediaCondition":"NM"}`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.update(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
+	}
+}
+
+func TestUpdateRejectsInvalidJSON(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPut, "/item-1", strings.NewReader(`{`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.update(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestUpdateReturnsExecErrors(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectExec("UPDATE public.collection_items").
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), "item-1", "user-1").
+		WillReturnError(assertErr("update failed"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPut, "/item-1", strings.NewReader(`{"mediaCondition":"NM"}`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.update(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestDeleteRemovesCollectionItem(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec("DELETE FROM public.collection_items").WithArgs("item-1", "user-1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodDelete, "/item-1", nil, "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.delete(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, res.Code)
+	}
+}
+
+func TestDeleteReturnsNotFound(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec("DELETE FROM public.collection_items").WithArgs("item-1", "user-1").WillReturnResult(pgxmock.NewResult("DELETE", 0))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodDelete, "/item-1", nil, "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.delete(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
+	}
+}
+
+func TestDeleteReturnsExecErrors(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec("DELETE FROM public.collection_items").WithArgs("item-1", "user-1").WillReturnError(assertErr("delete failed"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodDelete, "/item-1", nil, "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.delete(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestPublicListRequiresUserID(t *testing.T) {
+	h := NewHandler(nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+
+	h.publicList(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestListConditionReturnsEntries(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectQuery("SELECT id::text, media_condition, sleeve_condition").
+		WithArgs("item-1").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "media_condition", "sleeve_condition", "warp_notes", "scratch_notes", "cleaning_notes", "playback_notes", "created_at"}).
+			AddRow("condition-1", "NM", "VG+", "flat", "none", "ultrasonic", "quiet", "2026-01-01T00:00:00Z"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodGet, "/item-1/condition", nil, "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.listCondition(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, res.Code, res.Body.String())
+	}
+	for _, want := range []string{"condition-1", "NM", "ultrasonic", "quiet"} {
+		if !strings.Contains(res.Body.String(), want) {
+			t.Fatalf("expected condition response to contain %q, got %q", want, res.Body.String())
+		}
+	}
+}
+
+func TestListConditionReturnsNotFoundWhenItemIsNotOwned(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnError(pgx.ErrNoRows)
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodGet, "/item-1/condition", nil, "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.listCondition(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
+	}
+}
+
+func TestListConditionReturnsQueryErrors(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectQuery("SELECT id::text, media_condition, sleeve_condition").WithArgs("item-1").WillReturnError(assertErr("condition query failed"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodGet, "/item-1/condition", nil, "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.listCondition(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestListConditionReturnsScanErrors(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectQuery("SELECT id::text, media_condition, sleeve_condition").
+		WithArgs("item-1").
+		WillReturnRows(pgxmock.NewRows([]string{"id", "media_condition", "sleeve_condition", "warp_notes", "scratch_notes", "cleaning_notes", "playback_notes", "created_at"}).
+			AddRow("condition-1", struct{}{}, "VG+", "flat", "none", "ultrasonic", "quiet", "2026-01-01T00:00:00Z"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodGet, "/item-1/condition", nil, "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.listCondition(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestCreateConditionInsertsEntry(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectQuery("INSERT INTO public.condition_history").
+		WithArgs("item-1", "NM", "VG+", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("condition-1"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPost, "/item-1/condition", strings.NewReader(`{"mediaCondition":"NM","sleeveCondition":"VG+","warpNotes":"flat"}`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.createCondition(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusCreated, res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "condition-1") {
+		t.Fatalf("expected condition id, got %q", res.Body.String())
+	}
+}
+
+func TestCreateConditionDefaultsMissingConditions(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectQuery("INSERT INTO public.condition_history").
+		WithArgs("item-1", "VG", "VG", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("condition-1"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPost, "/item-1/condition", strings.NewReader(`{}`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.createCondition(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusCreated, res.Code, res.Body.String())
+	}
+}
+
+func TestCreateConditionReturnsNotFoundWhenItemIsNotOwned(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnError(pgx.ErrNoRows)
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPost, "/item-1/condition", strings.NewReader(`{}`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.createCondition(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
+	}
+}
+
+func TestCreateConditionRejectsInvalidJSON(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPost, "/item-1/condition", strings.NewReader(`{`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.createCondition(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestCreateConditionReturnsInsertErrors(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id").WithArgs("item-1", "user-1").WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("item-1"))
+	mock.ExpectQuery("INSERT INTO public.condition_history").
+		WithArgs("item-1", "NM", "VG", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnError(assertErr("condition insert failed"))
+
+	h := NewHandler(mock)
+	req := collectionRequestWithParam(http.MethodPost, "/item-1/condition", strings.NewReader(`{"mediaCondition":"NM"}`), "id", "item-1")
+	res := httptest.NewRecorder()
+
+	h.createCondition(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestFindCoverURLUsesCachedResult(t *testing.T) {
+	resetCoverCache()
+	coverURL := "https://cache.example/cover.jpg"
+	key := strings.ToLower(strings.TrimSpace("Cache Hit Album") + "\x00" + strings.TrimSpace("Cache Artist"))
+	coverCache.Lock()
+	coverCache.items[key] = coverCacheEntry{coverURL: &coverURL, expires: time.Now().Add(time.Hour)}
+	coverCache.Unlock()
+
+	got := findCoverURL(context.Background(), "Cache Hit Album", "Cache Artist")
+	if got == nil || *got != coverURL {
+		t.Fatalf("expected cached cover URL, got %#v", got)
+	}
+}
+
+func TestFindCoverURLReturnsNilForMusicBrainzStatus(t *testing.T) {
+	resetCoverCache()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	oldClient, oldMB, oldCover := coverHTTPClient, musicBrainzCoverBaseURL, coverArtBaseURL
+	coverHTTPClient, musicBrainzCoverBaseURL, coverArtBaseURL = server.Client(), server.URL, server.URL
+	defer func() { coverHTTPClient, musicBrainzCoverBaseURL, coverArtBaseURL = oldClient, oldMB, oldCover }()
+
+	if got := findCoverURL(context.Background(), "Status Failure Album", "Status Artist"); got != nil {
+		t.Fatalf("expected nil cover, got %#v", got)
+	}
+}
+
+func TestFindCoverURLReturnsNilWhenCoverArtIsMissing(t *testing.T) {
+	resetCoverCache()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"releases":[{"id":"missing-cover"}]}`))
+	}))
+	defer server.Close()
+	oldClient, oldMB, oldCover := coverHTTPClient, musicBrainzCoverBaseURL, coverArtBaseURL
+	coverHTTPClient, musicBrainzCoverBaseURL, coverArtBaseURL = server.Client(), server.URL, server.URL
+	defer func() { coverHTTPClient, musicBrainzCoverBaseURL, coverArtBaseURL = oldClient, oldMB, oldCover }()
+
+	if got := findCoverURL(context.Background(), "Missing Cover Album", "Missing Artist"); got != nil {
+		t.Fatalf("expected nil cover, got %#v", got)
+	}
+}
+
+func collectionRequestWithParam(method, target string, body io.Reader, key, value string) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, value)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, auth.UserIDKey, "user-1")
+	return req.WithContext(ctx)
+}
+
+func resetCoverCache() {
+	coverCache.Lock()
+	coverCache.items = map[string]coverCacheEntry{}
+	coverCache.Unlock()
 }
 
 type assertErr string

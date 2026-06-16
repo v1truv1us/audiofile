@@ -1,6 +1,7 @@
 package releases
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -308,5 +309,203 @@ func TestReleaseYear(t *testing.T) {
 	}
 	if releaseYear("bad-date") != nil {
 		t.Fatal("expected invalid date to return nil")
+	}
+}
+
+func TestSetDiscogsConfiguresBarcodeClient(t *testing.T) {
+	d := NewDiscogsClient("https://discogs.example", "key", "secret")
+	h := NewHandler()
+
+	h.SetDiscogs(d)
+
+	if h.discogs != d {
+		t.Fatal("expected SetDiscogs to store client")
+	}
+}
+
+func TestNewDiscogsClientReturnsNilWithoutCredentials(t *testing.T) {
+	if got := NewDiscogsClient("https://discogs.example", "", "secret"); got != nil {
+		t.Fatalf("expected nil client without key, got %#v", got)
+	}
+	if got := NewDiscogsClient("https://discogs.example", "key", ""); got != nil {
+		t.Fatalf("expected nil client without secret, got %#v", got)
+	}
+}
+
+func TestNewDiscogsClientUsesDefaultBaseURL(t *testing.T) {
+	got := NewDiscogsClient("", "key", "secret")
+	if got == nil {
+		t.Fatal("expected Discogs client")
+	}
+	if got.baseURL != "https://api.discogs.com" {
+		t.Fatalf("expected default base URL, got %q", got.baseURL)
+	}
+}
+
+func TestNewMusicBrainzClientUsesDefaultBaseURL(t *testing.T) {
+	got := NewMusicBrainzClient("")
+	if got.baseURL != "https://musicbrainz.org" {
+		t.Fatalf("expected default base URL, got %q", got.baseURL)
+	}
+}
+
+func TestMusicBrainzSearchBarcodeIsUnsupported(t *testing.T) {
+	got, err := NewMusicBrainzClient("http://unused.invalid").SearchBarcode(context.Background(), "123456")
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil results, got %#v", got)
+	}
+}
+
+func TestDiscogsSearchBarcodeReturnsEmptyResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("barcode"); got != "000111222333" {
+			t.Fatalf("expected barcode query, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer server.Close()
+
+	got, err := NewDiscogsClient(server.URL, "key", "secret").SearchBarcode(context.Background(), "000111222333")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty results, got %#v", got)
+	}
+}
+
+func TestDiscogsSearchBarcodeReturnsDecodeErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{`))
+	}))
+	defer server.Close()
+
+	_, err := NewDiscogsClient(server.URL, "key", "secret").SearchBarcode(context.Background(), "000111222333")
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+}
+
+func TestDiscogsSearchReturnsStatusErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	_, err := NewDiscogsClient(server.URL, "key", "secret").Search(context.Background(), "rate limited")
+	if err == nil {
+		t.Fatal("expected status error")
+	}
+}
+
+func TestScanRejectsInvalidJSON(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/scan", strings.NewReader(`{`))
+	res := httptest.NewRecorder()
+
+	h.scan(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestScanRequiresDiscogsCredentials(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/scan", strings.NewReader(`{"barcode":"018771210510"}`))
+	res := httptest.NewRecorder()
+
+	h.scan(res, req)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, res.Code)
+	}
+}
+
+func TestScanReturnsBadGatewayWhenDiscogsFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	h := &Handler{discogs: NewDiscogsClient(server.URL, "key", "secret")}
+	req := httptest.NewRequest(http.MethodPost, "/scan", strings.NewReader(`{"barcode":"018771210510"}`))
+	res := httptest.NewRecorder()
+
+	h.scan(res, req)
+
+	if res.Code != http.StatusBadGateway {
+		t.Fatalf("expected status %d, got %d", http.StatusBadGateway, res.Code)
+	}
+}
+
+func TestSearchReturnsEmptyArrayWhenSearchersHaveNoResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"releases":[]}`))
+	}))
+	defer server.Close()
+
+	h := &Handler{searchers: []ReleaseSearcher{NewMusicBrainzClient(server.URL)}}
+	req := httptest.NewRequest(http.MethodGet, "/search?q=no-results-unique", nil)
+	res := httptest.NewRecorder()
+
+	h.search(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, res.Code, res.Body.String())
+	}
+	if strings.TrimSpace(res.Body.String()) != "null" {
+		t.Fatalf("expected null empty result response, got %q", res.Body.String())
+	}
+}
+
+func TestBuildMBQuery(t *testing.T) {
+	if got := buildMBQuery("Miles Davis - Kind of Blue"); got != `artist:"Miles Davis" AND release:"Kind of Blue"` {
+		t.Fatalf("expected split artist/title query, got %q", got)
+	}
+	if got := buildMBQuery("Sade"); got != `artist:"Sade" OR release:"Sade"` {
+		t.Fatalf("expected short query expansion, got %q", got)
+	}
+	if got := buildMBQuery("The Shape Of Jazz To Come"); got != "The Shape Of Jazz To Come" {
+		t.Fatalf("expected long query unchanged, got %q", got)
+	}
+}
+
+func TestArtistNameJoinsNonEmptyCredits(t *testing.T) {
+	got := artistName([]struct {
+		Name string `json:"name"`
+	}{{Name: "Miles"}, {Name: ""}, {Name: "Davis"}})
+	if got != "MilesDavis" {
+		t.Fatalf("expected joined artist credits, got %q", got)
+	}
+}
+
+func TestLabelNameSkipsNilAndEmptyLabels(t *testing.T) {
+	got := labelName([]struct {
+		Label *struct {
+			Name string `json:"name"`
+		} `json:"label"`
+	}{
+		{},
+		{Label: &struct {
+			Name string `json:"name"`
+		}{Name: ""}},
+		{Label: &struct {
+			Name string `json:"name"`
+		}{Name: "Columbia"}},
+	})
+	if got != "Columbia" {
+		t.Fatalf("expected first non-empty label, got %q", got)
+	}
+}
+
+func TestReleaseYearReturnsNilForShortDate(t *testing.T) {
+	if got := releaseYear("199"); got != nil {
+		t.Fatalf("expected nil for short date, got %#v", got)
 	}
 }
