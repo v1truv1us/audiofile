@@ -1,8 +1,8 @@
 <script lang="ts">
 	import WishlistRow from './WishlistRow.svelte';
+	import ShareDialog from './ShareDialog.svelte';
 	import { apiFetch } from '../lib/api';
 	import { type ReleaseSearchResult } from '../lib/barcode';
-	import { supabase } from '../lib/supabase';
 
 	type ApiItem = {
 		id: string;
@@ -20,7 +20,7 @@
 	let editingId = $state<string | null>(null);
 	let saving = $state(false);
 	let error = $state('');
-	let shareMessage = $state('');
+	let showShareDialog = $state(false);
 	let isSharedView = $state(false);
 
 	let form = $state({
@@ -152,24 +152,6 @@
 		}
 	}
 
-	async function shareWishlist() {
-		try {
-			const { data: { session } } = await supabase.auth.getSession();
-			const userID = session?.user?.id;
-			if (!userID) throw new Error('Sign in to share your wishlist.');
-
-			const url = `${window.location.origin}/wishlist?share=${encodeURIComponent(userID)}`;
-			if (navigator.share) {
-				await navigator.share({ title: 'AudioFile Wishlist', text: 'Records I am hunting for on AudioFile', url });
-				return;
-			}
-			await navigator.clipboard.writeText(url);
-			shareMessage = 'Wishlist link copied.';
-		} catch (e) {
-			shareMessage = e instanceof Error ? e.message : 'Failed to share wishlist';
-		}
-	}
-
 	async function fetchWishlist() {
 		loading = true;
 		try {
@@ -201,13 +183,16 @@
 		</div>
 		{#if !isSharedView}
 			<div class="flex gap-2">
-				<button type="button" class="border border-espresso/30 text-espresso text-xs tracking-[0.1em] uppercase px-4 py-2 rounded" on:click={shareWishlist}>Share</button>
+				<button type="button" class="border border-espresso/30 text-espresso text-xs tracking-[0.1em] uppercase px-4 py-2 rounded" on:click={() => showShareDialog = !showShareDialog}>Share</button>
 				<button type="button" class="bg-espresso text-gold text-xs tracking-[0.1em] uppercase px-4 py-2 rounded" on:click={() => { resetForm(); showAddForm = !showAddForm; }}>+ Add to Wishlist</button>
 			</div>
 		{/if}
 	</div>
-	{#if shareMessage}<p class="text-xs text-gold-dark">{shareMessage}</p>{/if}
-	{#if error && !showAddForm}<p class="text-xs text-red-700">{error}</p>{/if}
+	{#if error && !showAddForm && !showShareDialog}<p class="text-xs text-red-700">{error}</p>{/if}
+
+	{#if showShareDialog}
+		<ShareDialog onclose={() => showShareDialog = false} />
+	{/if}
 
 	{#if showAddForm}
 		<div class="bg-white border border-gold/50 rounded-lg p-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

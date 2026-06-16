@@ -20,6 +20,7 @@ import (
 
 	"github.com/v1truv1us/audiofile/backend/internal/auth"
 	"github.com/v1truv1us/audiofile/backend/internal/collection"
+	"github.com/v1truv1us/audiofile/backend/internal/profiles"
 	"github.com/v1truv1us/audiofile/backend/internal/releases"
 	"github.com/v1truv1us/audiofile/backend/internal/wishlist"
 )
@@ -106,6 +107,7 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(supabaseURL))
 			r.Mount("/collection", collection.NewHandler(pool).Routes())
+			r.Mount("/profiles", profiles.NewHandler(pool).Routes())
 			r.Mount("/wishlist", wishlist.NewHandler(pool).Routes())
 		})
 	})

@@ -1,14 +1,22 @@
 package wishlist
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	pgxmock "github.com/pashagolub/pgxmock/v4"
+
+	"github.com/v1truv1us/audiofile/backend/internal/auth"
 )
 
 func TestCreateRejectsInvalidJSON(t *testing.T) {
@@ -529,11 +537,507 @@ func TestPurchaseRequiresID(t *testing.T) {
 	}
 }
 
+func TestCreateShareReturnsViewerID(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("miles").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1", "hi").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"miles","message":"hi"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusCreated, res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "viewer-1") {
+		t.Fatalf("expected viewer id, got %q", res.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateShareReturnsNotFoundForUnknownUser(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("missing").
+		WillReturnError(pgx.ErrNoRows)
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"missing"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
+	}
+}
+
+func TestCreateShareRejectsSelfShare(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("owner").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("owner-1"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"owner"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestCreateShareReturnsDuplicateConflict(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("miles").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1", "").
+		WillReturnError(&pgconn.PgError{Code: "23505"})
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"miles"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d", http.StatusConflict, res.Code)
+	}
+}
+
+func TestListSharesReturnsOutgoingShares(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	message := "birthday"
+	createdAt := time.Date(2026, 6, 16, 11, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("SELECT ws.viewer_id::text").
+		WithArgs("owner-1").
+		WillReturnRows(pgxmock.NewRows([]string{"viewer_id", "username", "display_name", "message", "created_at"}).
+			AddRow("viewer-1", "miles", "Miles Davis", &message, createdAt))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shares", nil)
+	res := httptest.NewRecorder()
+
+	h.listShares(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, res.Code, res.Body.String())
+	}
+	for _, want := range []string{"viewer-1", "miles", "Miles Davis", "birthday", "2026-06-16T11:00:00Z"} {
+		if !strings.Contains(res.Body.String(), want) {
+			t.Fatalf("expected body to contain %q, got %q", want, res.Body.String())
+		}
+	}
+}
+
+func TestDeleteShareRemovesOwnedShare(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec("DELETE FROM public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1").
+		WillReturnResult(pgxmock.NewResult("DELETE", 1))
+
+	h := NewHandler(mock)
+	req := wishlistRequestWithParam(http.MethodDelete, "/shares/viewer-1", nil, "viewerID", "viewer-1")
+	res := httptest.NewRecorder()
+
+	h.deleteShare(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusNoContent, res.Code, res.Body.String())
+	}
+}
+
+func TestDeleteShareReturnsNotFoundForMissingShare(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec("DELETE FROM public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1").
+		WillReturnResult(pgxmock.NewResult("DELETE", 0))
+
+	h := NewHandler(mock)
+	req := wishlistRequestWithParam(http.MethodDelete, "/shares/viewer-1", nil, "viewerID", "viewer-1")
+	res := httptest.NewRecorder()
+
+	h.deleteShare(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
+	}
+}
+
+func TestSharedWithMeReturnsAuthorizedWishlist(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	price := 20.0
+	notes := "first press"
+	mock.ExpectQuery("SELECT ws.owner_id::text").
+		WithArgs("owner-1").
+		WillReturnRows(pgxmock.NewRows([]string{"owner_id", "username", "display_name"}).
+			AddRow("shared-owner-1", "miles", "Miles Davis"))
+	mock.ExpectQuery("SELECT w.id").
+		WithArgs("shared-owner-1", 50).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "priority", "target_price", "pressing_notes", "title", "artist", "label"}).
+			AddRow("wish-1", 2, &price, &notes, "Kind of Blue", "Miles Davis", "Columbia"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shared-with-me", nil)
+	res := httptest.NewRecorder()
+
+	h.sharedWithMe(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, res.Code, res.Body.String())
+	}
+	for _, want := range []string{"shared-owner-1", "miles", "Kind of Blue", "20", "first press"} {
+		if !strings.Contains(res.Body.String(), want) {
+			t.Fatalf("expected body to contain %q, got %q", want, res.Body.String())
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSharedWithMeReturnsEmptyArrayWhenNoShareExists(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT ws.owner_id::text").
+		WithArgs("owner-1").
+		WillReturnRows(pgxmock.NewRows([]string{"owner_id", "username", "display_name"}))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shared-with-me", nil)
+	res := httptest.NewRecorder()
+
+	h.sharedWithMe(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, res.Code, res.Body.String())
+	}
+	if strings.TrimSpace(res.Body.String()) != "[]" {
+		t.Fatalf("expected empty array, got %q", res.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func wishlistRequest(method, target string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, chi.NewRouteContext())
+	ctx = context.WithValue(ctx, auth.UserIDKey, "owner-1")
+	return req.WithContext(ctx)
+}
+
+func wishlistRequestWithParam(method, target string, body io.Reader, key, value string) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, value)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, auth.UserIDKey, "owner-1")
+	return req.WithContext(ctx)
+}
+
 type assertErr string
 
 func (e assertErr) Error() string { return string(e) }
 
 var _ = errors.New
+
+func TestCreateShareRejectsInvalidJSON(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader("{"))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestCreateShareRequiresUsername(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"  "}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestCreateShareReturnsServerErrorOnProfileLookupFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("miles").
+		WillReturnError(assertErr("db down"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"miles"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateShareReturnsServerErrorOnInsertFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("miles").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1", "").
+		WillReturnError(assertErr("insert failed"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"miles"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListSharesReturnsServerErrorOnQueryFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT ws.viewer_id::text").
+		WithArgs("owner-1").
+		WillReturnError(assertErr("query failed"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shares", nil)
+	res := httptest.NewRecorder()
+
+	h.listShares(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListSharesReturnsServerErrorOnScanFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	// Column count mismatch forces a scan error.
+	mock.ExpectQuery("SELECT ws.viewer_id::text").
+		WithArgs("owner-1").
+		WillReturnRows(pgxmock.NewRows([]string{"viewer_id", "bogus"}).
+			AddRow("viewer-1", "oops"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shares", nil)
+	res := httptest.NewRecorder()
+
+	h.listShares(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestDeleteShareReturnsServerErrorOnExecFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectExec("DELETE FROM public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1").
+		WillReturnError(assertErr("delete failed"))
+
+	h := NewHandler(mock)
+	req := wishlistRequestWithParam(http.MethodDelete, "/shares/viewer-1", nil, "viewerID", "viewer-1")
+	res := httptest.NewRecorder()
+
+	h.deleteShare(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSharedWithMeReturnsServerErrorOnQueryFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT ws.owner_id::text").
+		WithArgs("owner-1").
+		WillReturnError(assertErr("query failed"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shared-with-me", nil)
+	res := httptest.NewRecorder()
+
+	h.sharedWithMe(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSharedWithMeReturnsServerErrorOnScanFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	// Column count mismatch forces a scan error.
+	mock.ExpectQuery("SELECT ws.owner_id::text").
+		WithArgs("owner-1").
+		WillReturnRows(pgxmock.NewRows([]string{"owner_id", "bogus"}).
+			AddRow("shared-owner-1", "oops"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shared-with-me", nil)
+	res := httptest.NewRecorder()
+
+	h.sharedWithMe(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestSharedWithMeReturnsServerErrorOnItemFetchFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT ws.owner_id::text").
+		WithArgs("owner-1").
+		WillReturnRows(pgxmock.NewRows([]string{"owner_id", "username", "display_name"}).
+			AddRow("shared-owner-1", "miles", "Miles Davis"))
+	mock.ExpectQuery("SELECT w.id").
+		WithArgs("shared-owner-1", 50).
+			WillReturnError(assertErr("items query failed"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodGet, "/shared-with-me", nil)
+	res := httptest.NewRecorder()
+
+	h.sharedWithMe(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestOptionalStringTrimsBlankStrings(t *testing.T) {
 	if optionalString("  ") != nil {

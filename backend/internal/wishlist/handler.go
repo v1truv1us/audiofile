@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -56,6 +58,34 @@ type PurchaseWishlistItemRequest struct {
 	Notes           string   `json:"notes"`
 }
 
+type CreateShareRequest struct {
+	Username string `json:"username"`
+	Message  string `json:"message"`
+}
+
+type ShareViewer struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+}
+
+type WishlistShare struct {
+	ViewerID  string      `json:"viewerId"`
+	Viewer    ShareViewer `json:"viewer"`
+	Message   string      `json:"message"`
+	CreatedAt string      `json:"createdAt"`
+}
+
+type SharedWishlistOwner struct {
+	ID          string `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+}
+
+type SharedWishlist struct {
+	Owner SharedWishlistOwner `json:"owner"`
+	Items []WishlistItem      `json:"items"`
+}
+
 func NewHandler(pool dbPool) *Handler {
 	return &Handler{pool: pool}
 }
@@ -64,6 +94,10 @@ func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.list)
 	r.Post("/", h.create)
+	r.Post("/shares", h.createShare)
+	r.Get("/shares", h.listShares)
+	r.Delete("/shares/{viewerID}", h.deleteShare)
+	r.Get("/shared-with-me", h.sharedWithMe)
 	r.Put("/{id}", h.update)
 	r.Delete("/{id}", h.delete)
 	r.Post("/{id}/purchase", h.purchase)
@@ -295,6 +329,139 @@ func (h *Handler) purchase(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"id": itemID})
 }
 
+func (h *Handler) createShare(w http.ResponseWriter, r *http.Request) {
+	var req CreateShareRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" {
+		http.Error(w, "username is required", http.StatusBadRequest)
+		return
+	}
+
+	callerID := auth.UserID(r.Context())
+	var viewerID string
+	if err := h.pool.QueryRow(r.Context(), `
+		SELECT id::text
+		FROM public.profiles
+		WHERE lower(username) = lower($1)`, req.Username).Scan(&viewerID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if viewerID == callerID {
+		http.Error(w, "cannot share to yourself", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.pool.Exec(r.Context(), `
+		INSERT INTO public.wishlist_shares (owner_id, viewer_id, message)
+		VALUES ($1, $2, $3)`, callerID, viewerID, req.Message); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			http.Error(w, "already shared", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"viewerId": viewerID})
+}
+
+func (h *Handler) listShares(w http.ResponseWriter, r *http.Request) {
+	callerID := auth.UserID(r.Context())
+	rows, err := h.pool.Query(r.Context(), `
+		SELECT ws.viewer_id::text, p.username, p.display_name, ws.message, ws.created_at
+		FROM public.wishlist_shares ws
+		JOIN public.profiles p ON p.id = ws.viewer_id
+		WHERE ws.owner_id = $1
+		ORDER BY ws.created_at DESC`, callerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	shares := []WishlistShare{}
+	for rows.Next() {
+		var share WishlistShare
+		var message *string
+		var createdAt time.Time
+		if err := rows.Scan(&share.ViewerID, &share.Viewer.Username, &share.Viewer.DisplayName, &message, &createdAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if message != nil {
+			share.Message = *message
+		}
+		share.CreatedAt = createdAt.Format(time.RFC3339)
+		shares = append(shares, share)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(shares)
+}
+
+func (h *Handler) deleteShare(w http.ResponseWriter, r *http.Request) {
+	viewerID := chi.URLParam(r, "viewerID")
+	callerID := auth.UserID(r.Context())
+
+	tag, err := h.pool.Exec(r.Context(), `
+		DELETE FROM public.wishlist_shares
+		WHERE owner_id = $1 AND viewer_id = $2`, callerID, viewerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		http.Error(w, "wishlist share not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) sharedWithMe(w http.ResponseWriter, r *http.Request) {
+	callerID := auth.UserID(r.Context())
+	rows, err := h.pool.Query(r.Context(), `
+		SELECT ws.owner_id::text, p.username, p.display_name
+		FROM public.wishlist_shares ws
+		JOIN public.profiles p ON p.id = ws.owner_id
+		WHERE ws.viewer_id = $1
+		ORDER BY ws.created_at DESC`, callerID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	shared := []SharedWishlist{}
+	for rows.Next() {
+		var entry SharedWishlist
+		if err := rows.Scan(&entry.Owner.ID, &entry.Owner.Username, &entry.Owner.DisplayName); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items, err := h.queryWishlistItems(r.Context(), entry.Owner.ID, 50)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		entry.Items = items
+		shared = append(shared, entry)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(shared)
+}
+
 func (h *Handler) publicList(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userID")
 	if userID == "" {
@@ -314,7 +481,18 @@ func (h *Handler) listForUser(w http.ResponseWriter, r *http.Request, userID str
 		limit = 50
 	}
 
-	rows, err := h.pool.Query(r.Context(), `
+	items, err := h.queryWishlistItems(r.Context(), userID, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+func (h *Handler) queryWishlistItems(ctx context.Context, userID string, limit int) ([]WishlistItem, error) {
+	rows, err := h.pool.Query(ctx, `
 		SELECT w.id::text, w.priority, w.target_price, w.pressing_notes,
 		       COALESCE(r.title, w.manual_title, '') AS title,
 		       COALESCE(r.artist, w.manual_artist, '') AS artist,
@@ -325,8 +503,7 @@ func (h *Handler) listForUser(w http.ResponseWriter, r *http.Request, userID str
 		ORDER BY w.priority ASC, w.created_at DESC
 		LIMIT $2`, userID, limit)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -340,8 +517,7 @@ func (h *Handler) listForUser(w http.ResponseWriter, r *http.Request, userID str
 			&it.ID, &it.Priority, &price, &notes,
 			&it.Title, &it.Artist, &it.Label,
 		); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 
 		it.TargetPrice = price
@@ -350,9 +526,7 @@ func (h *Handler) listForUser(w http.ResponseWriter, r *http.Request, userID str
 		}
 		items = append(items, it)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	return items, nil
 }
 
 func optionalString(s string) *string {
