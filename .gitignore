@@ -10,14 +10,16 @@ frontend/.env
 !.env.example
 !backend/.env.example
 
-# Build output
+# Build output & test artifacts
 frontend/dist/
+backend/coverage.out
 
 # Database
 *.db
 
-# Supabase temp files
+# Supabase temp files & branches
 supabase/.temp/
+supabase/.branches/
 
 # Solo task tracker
 .solo/
@@ -37,3 +39,7 @@ vinyl_collection_prd_mvp_adr_v2.docx
 
 # Specs (working docs, not source)
 specs/
+
+# Local agent/tooling state (not source)
+.crew/
+.pi/
