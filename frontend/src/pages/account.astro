@@ -22,10 +22,24 @@ import Layout from '../layouts/Layout.astro';
 
       <section class="space-y-3">
         <div>
-          <h2 class="font-serif text-xl text-espresso font-normal">Username</h2>
-          <p class="text-sm text-gold-muted mt-1">Username display and editing are coming soon. Friends will use your username to share wishlists with you.</p>
+          <h2 class="font-serif text-xl text-espresso font-normal">Profile</h2>
+          <p class="text-sm text-gold-muted mt-1">Others share wishlists to you by username. Display name is optional.</p>
+        </div>
+        <div id="profile-loading" class="text-xs text-gold-muted">Loading profile…</div>
+        <div id="profile-form" class="hidden space-y-3">
+          <label class="block text-xs text-gold-dark uppercase tracking-wide">Username
+            <input id="username-input" type="text" maxlength="20" class="mt-1 w-full border border-gold/40 rounded px-3 py-2 text-espresso normal-case" placeholder="username" />
+          </label>
+          <p class="text-[10px] text-gold-muted">Lowercase letters, numbers, and underscores. 3–20 characters.</p>
+          <label class="block text-xs text-gold-dark uppercase tracking-wide">Display name (optional)
+            <input id="displayname-input" type="text" maxlength="50" class="mt-1 w-full border border-gold/40 rounded px-3 py-2 text-espresso normal-case" placeholder="Your Name" />
+          </label>
+          <p id="profile-msg" class="hidden text-xs"></p>
+          <button id="save-profile-btn" type="button" class="bg-espresso text-gold text-xs tracking-[0.1em] uppercase px-4 py-2 rounded disabled:opacity-60">Save profile</button>
         </div>
       </section>
+
+      <hr class="border-gold/20" />
 
       <button id="signout-btn" class="w-full bg-espresso text-gold text-xs tracking-[0.1em] uppercase py-3 rounded hover:bg-espresso/90 transition-colors disabled:opacity-50">
         Sign out
@@ -36,14 +50,94 @@ import Layout from '../layouts/Layout.astro';
 
 <script>
   import { supabase } from '../lib/supabase'
+  import { apiFetch } from '../lib/api'
 
   const errorMsg = document.getElementById('error-msg')!
   const email = document.getElementById('account-email')!
   const signoutBtn = document.getElementById('signout-btn') as HTMLButtonElement
 
+  // Profile elements
+  const profileLoading = document.getElementById('profile-loading')!
+  const profileForm = document.getElementById('profile-form')!
+  const usernameInput = document.getElementById('username-input') as HTMLInputElement
+  const displaynameInput = document.getElementById('displayname-input') as HTMLInputElement
+  const profileMsg = document.getElementById('profile-msg')!
+  const saveProfileBtn = document.getElementById('save-profile-btn') as HTMLButtonElement
+
   function showError(message: string) {
     errorMsg.textContent = message
     errorMsg.classList.remove('hidden')
+  }
+
+  function showProfileMsg(message: string, isError: boolean) {
+    profileMsg.textContent = message
+    profileMsg.classList.remove('hidden', 'text-red-700', 'text-gold-dark')
+    profileMsg.classList.add(isError ? 'text-red-700' : 'text-gold-dark')
+  }
+
+  async function loadProfile() {
+    try {
+      const res = await apiFetch('/api/profiles/me')
+      if (!res.ok) throw new Error(await res.text())
+      const profile = await res.json()
+      usernameInput.value = profile.username ?? ''
+      displaynameInput.value = profile.displayName ?? ''
+      profileLoading.classList.add('hidden')
+      profileForm.classList.remove('hidden')
+    } catch (e) {
+      profileLoading.textContent = e instanceof Error ? e.message : 'Failed to load profile'
+    }
+  }
+
+  async function saveProfile() {
+    showProfileMsg('', false)
+    profileMsg.classList.add('hidden')
+    saveProfileBtn.disabled = true
+    saveProfileBtn.textContent = 'Saving…'
+
+    const username = usernameInput.value.trim().toLowerCase()
+    const displayName = displaynameInput.value.trim()
+
+    // Client-side validation mirrors the backend rules.
+    if (username.length < 3 || username.length > 20) {
+      showProfileMsg('Username must be 3–20 characters.', true)
+      saveProfileBtn.disabled = false
+      saveProfileBtn.textContent = 'Save profile'
+      return
+    }
+    if (!/^[a-z0-9_]+$/.test(username)) {
+      showProfileMsg('Username may only contain lowercase letters, numbers, and underscores.', true)
+      saveProfileBtn.disabled = false
+      saveProfileBtn.textContent = 'Save profile'
+      return
+    }
+
+    try {
+      const res = await apiFetch('/api/profiles/me', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, displayName }),
+      })
+      if (res.status === 409) {
+        showProfileMsg('That username is taken.', true)
+        return
+      }
+      if (res.status === 400) {
+        const text = await res.text()
+        showProfileMsg(text || 'Invalid username.', true)
+        return
+      }
+      if (!res.ok) throw new Error(await res.text())
+      const updated = await res.json()
+      usernameInput.value = updated.username ?? username
+      displaynameInput.value = updated.displayName ?? displayName
+      showProfileMsg('Profile saved.', false)
+    } catch (e) {
+      showProfileMsg(e instanceof Error ? e.message : 'Failed to save profile', true)
+    } finally {
+      saveProfileBtn.disabled = false
+      saveProfileBtn.textContent = 'Save profile'
+    }
   }
 
   const { data: sessionData } = await supabase.auth.getSession()
@@ -51,7 +145,10 @@ import Layout from '../layouts/Layout.astro';
     window.location.href = '/login'
   } else {
     email.textContent = sessionData.session.user.email ?? 'Signed in'
+    loadProfile()
   }
+
+  saveProfileBtn.addEventListener('click', saveProfile)
 
   signoutBtn.addEventListener('click', async () => {
     errorMsg.classList.add('hidden')
