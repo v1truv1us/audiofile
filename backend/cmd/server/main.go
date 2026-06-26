@@ -106,22 +106,32 @@ func main() {
 
 		// Billing webhook (outside auth — uses Paddle signature verification)
 		var paddleClient billing.PaddleClient
+		paddleEnvironment := os.Getenv("PADDLE_ENVIRONMENT")
+		if paddleEnvironment == "" {
+			paddleEnvironment = "sandbox"
+		}
 		if apiKey := os.Getenv("PADDLE_API_KEY"); apiKey != "" {
-			environment := os.Getenv("PADDLE_ENVIRONMENT")
-			if environment == "" {
-				environment = "sandbox"
-			}
 			appBaseURL := os.Getenv("APP_BASE_URL")
 			if appBaseURL == "" {
 				appBaseURL = "https://audiofile.app"
 			}
-			paddleClient = billing.NewPaddleClient(apiKey, environment, appBaseURL)
-			log.Printf("Paddle client initialized (environment: %s)", environment)
+			paddleClient = billing.NewPaddleClient(apiKey, paddleEnvironment, appBaseURL)
+			log.Printf("Paddle client initialized (environment: %s)", paddleEnvironment)
 		} else {
 			paddleClient = &billing.NoOpPaddleClient{}
-			log.Println("Warning: PADDLE_API_KEY not set, using no-op Paddle client")
+			log.Println("Paddle API key not set; billing endpoints will return errors (no-op client)")
 		}
 		billingHandler := billing.NewHandler(pool, paddleClient)
+
+		webhookSecret := os.Getenv("PADDLE_WEBHOOK_SECRET")
+		if webhookSecret == "" {
+			if paddleEnvironment == "sandbox" {
+				log.Println("Warning: PADDLE_WEBHOOK_SECRET is empty; webhook signature verification is disabled in sandbox")
+			} else {
+				log.Printf("Warning: PADDLE_WEBHOOK_SECRET is empty; webhooks will be rejected in %s environment", paddleEnvironment)
+			}
+		}
+
 		r.Post("/billing/webhook", billingHandler.Webhook)
 
 		// Authenticated routes

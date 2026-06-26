@@ -12,31 +12,27 @@ import (
 
 // PaddleHTTPClient implements PaddleClient using the Paddle Billing API.
 type PaddleHTTPClient struct {
-	apiKey      string
-	baseURL     string
-	httpClient  *http.Client
-	successURL  string
-	cancelURL   string
-	portalBase  string
+	apiKey     string
+	baseURL    string
+	httpClient *http.Client
+	successURL string
+	cancelURL  string
 }
 
 // NewPaddleClient creates a Paddle API client.
 // environment should be "production" or "sandbox".
 func NewPaddleClient(apiKey, environment, appBaseURL string) *PaddleHTTPClient {
 	baseURL := "https://sandbox-api.paddle.com"
-	portalBase := "https://sandbox-buy.paddle.com"
 	if environment == "production" {
 		baseURL = "https://api.paddle.com"
-		portalBase = "https://buy.paddle.com"
 	}
 
 	return &PaddleHTTPClient{
 		apiKey:     apiKey,
 		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		successURL: appBaseURL + "/settings/billing?checkout=success",
-		cancelURL:  appBaseURL + "/settings/billing?checkout=canceled",
-		portalBase: portalBase,
+		successURL: appBaseURL + "/account?checkout=success#billing",
+		cancelURL:  appBaseURL + "/account?checkout=canceled#billing",
 	}
 }
 
@@ -106,19 +102,55 @@ func (c *PaddleHTTPClient) CreateTransaction(ctx context.Context, priceID string
 	return result.Data.Checkout.URL, nil
 }
 
-// GetCustomerPortalURL returns the Paddle customer portal URL.
-// Paddle's customer portal is a hosted page where customers can manage subscriptions.
+// GetCustomerPortalURL creates a Paddle customer portal session and returns the overview URL.
 func (c *PaddleHTTPClient) GetCustomerPortalURL(ctx context.Context, customerID string) (string, error) {
 	if customerID == "" {
 		return "", fmt.Errorf("customer ID is required")
 	}
 
-	// Paddle's customer portal URL pattern
-	// Customers access their portal at: https://buy.paddle.com/portal/customers/{customer_id}
-	// We can optionally append a return_url query parameter
-	portalURL := fmt.Sprintf("%s/portal/customers/%s", c.portalBase, customerID)
+	body, err := json.Marshal(map[string]any{})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
 
-	return portalURL, nil
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/customers/"+customerID+"/portal-sessions", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to call Paddle API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("Paddle API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data struct {
+			URLs struct {
+				General struct {
+					Overview string `json:"overview"`
+				} `json:"general"`
+			} `json:"urls"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if result.Data.URLs.General.Overview == "" {
+		return "", fmt.Errorf("Paddle API returned empty portal overview URL")
+	}
+
+	return result.Data.URLs.General.Overview, nil
 }
 
 // GetSubscriptionPeriodEnd fetches the current billing period end for a subscription.

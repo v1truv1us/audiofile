@@ -27,6 +27,7 @@ type SignatureValidator func(payload []byte, header string) error
 type handlerPool interface {
 	dbPool
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // Handler handles billing-related HTTP endpoints.
@@ -60,8 +61,11 @@ func NewHandler(pool handlerPool, paddle PaddleClient) *Handler {
 			}
 			secret := os.Getenv("PADDLE_WEBHOOK_SECRET")
 			if secret == "" {
-				// If no secret configured, accept any well-formed signature (dev mode)
-				return nil
+				if os.Getenv("PADDLE_ENVIRONMENT") == "sandbox" {
+					// In sandbox, allow unsigned webhooks for development
+					return nil
+				}
+				return errors.New("paddle webhook secret not configured")
 			}
 			signedPayload := ts + ":" + string(payload)
 			mac := hmac.New(sha256.New, []byte(secret))
@@ -343,13 +347,16 @@ func (h *Handler) setVIP(w http.ResponseWriter, r *http.Request) {
 
 // paddleWebhookEvent represents the structure of a Paddle webhook notification.
 type paddleWebhookEvent struct {
-	EventType string          `json:"event_type"`
-	Data      json.RawMessage `json:"data"`
+	EventID    string          `json:"event_id"`
+	EventType  string          `json:"event_type"`
+	OccurredAt string          `json:"occurred_at"`
+	Data       json.RawMessage `json:"data"`
 }
 
 // paddleSubscriptionData represents subscription/transaction data from Paddle webhooks.
 type paddleSubscriptionData struct {
 	ID               string `json:"id"`
+	SubscriptionID   string `json:"subscription_id"`
 	CustomerID       string `json:"customer_id"`
 	Status           string `json:"status"`
 	CurrentBillingPeriod struct {
@@ -434,8 +441,33 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	subID := subData.ID
+	if event.EventType == "transaction.completed" && subData.SubscriptionID != "" {
+		subID = subData.SubscriptionID
+	}
 
-	_, err = h.pool.Exec(r.Context(), `
+	ctx := r.Context()
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to begin transaction"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	insertResult, err := tx.Exec(ctx, `
+		INSERT INTO public.paddle_webhook_events (event_id, event_type)
+		VALUES ($1, $2)
+		ON CONFLICT (event_id) DO NOTHING`,
+		event.EventID, event.EventType)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record webhook event"})
+		return
+	}
+	if insertResult.RowsAffected() == 0 {
+		writeJSON(w, http.StatusOK, map[string]bool{"received": true})
+		return
+	}
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO public.subscriptions (id, user_id, paddle_customer_id, price_id, tier, status, current_period_end)
 		VALUES ($1, $2::uuid, $3, $4, $5, $6, $7)
 		ON CONFLICT (user_id) DO UPDATE SET
@@ -449,6 +481,11 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		subID, userID, subData.CustomerID, priceID, tier, status, currentPeriodEnd)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update subscription"})
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to commit transaction"})
 		return
 	}
 
