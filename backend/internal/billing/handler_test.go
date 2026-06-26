@@ -75,6 +75,14 @@ func makePaddleSignature(payload []byte, secret string) string {
 	return "ts=" + ts + ";h1=" + h1
 }
 
+func withSandboxEnv(t *testing.T) {
+	t.Helper()
+	os.Setenv("PADDLE_ENVIRONMENT", "sandbox")
+	t.Cleanup(func() {
+		os.Unsetenv("PADDLE_ENVIRONMENT")
+	})
+}
+
 // --- UserStatus / IsPremium tests ---
 
 func TestIsPremiumVIP(t *testing.T) {
@@ -356,6 +364,118 @@ func TestGuardLimitUnknownActionPasses(t *testing.T) {
 	err = GuardLimit(context.Background(), mock, "user-1", "unknown_action")
 	if err != nil {
 		t.Fatalf("expected nil for unknown action, got %v", err)
+	}
+}
+
+// --- Handler: config tests ---
+
+func TestConfigReturnsEnvValues(t *testing.T) {
+	os.Setenv("PADDLE_PREMIUM_MONTHLY_PRICE_ID", "pri_test")
+	os.Setenv("PADDLE_ENVIRONMENT", "production")
+	os.Setenv("PADDLE_CLIENT_TOKEN", "tok_test")
+	defer func() {
+		os.Unsetenv("PADDLE_PREMIUM_MONTHLY_PRICE_ID")
+		os.Unsetenv("PADDLE_ENVIRONMENT")
+		os.Unsetenv("PADDLE_CLIENT_TOKEN")
+	}()
+
+	h := NewHandler(nil, nil)
+	req := billingRequest(http.MethodGet, "/config", nil)
+	res := httptest.NewRecorder()
+	h.config(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	body := res.Body.String()
+	for _, want := range []string{`"premiumMonthlyPriceId":"pri_test"`, `"environment":"production"`, `"clientToken":"tok_test"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected body to contain %q, got %s", want, body)
+		}
+	}
+}
+
+func TestConfigDefaultsEnvironmentToSandbox(t *testing.T) {
+	os.Unsetenv("PADDLE_ENVIRONMENT")
+	defer os.Unsetenv("PADDLE_ENVIRONMENT")
+
+	h := NewHandler(nil, nil)
+	req := billingRequest(http.MethodGet, "/config", nil)
+	res := httptest.NewRecorder()
+	h.config(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"environment":"sandbox"`) {
+		t.Fatalf("expected sandbox environment, got %s", res.Body.String())
+	}
+}
+
+// --- Handler: test endpoint tests ---
+
+func TestTestEndpointPaddleNotConfigured(t *testing.T) {
+	h := NewHandler(nil, nil)
+	req := billingRequest(http.MethodGet, "/test", nil)
+	res := httptest.NewRecorder()
+	h.test(res, req)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
+func TestTestEndpointAuthError(t *testing.T) {
+	paddle := &mockPaddle{
+		createTransactionFn: func(ctx context.Context, priceID string, customData map[string]string) (string, error) {
+			return "", errors.New("authentication failed: 401")
+		},
+	}
+	h := NewHandler(nil, paddle)
+	req := billingRequest(http.MethodGet, "/test", nil)
+	res := httptest.NewRecorder()
+	h.test(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
+func TestTestEndpointOtherError(t *testing.T) {
+	paddle := &mockPaddle{
+		createTransactionFn: func(ctx context.Context, priceID string, customData map[string]string) (string, error) {
+			return "", errors.New("price ID not found")
+		},
+	}
+	h := NewHandler(nil, paddle)
+	req := billingRequest(http.MethodGet, "/test", nil)
+	res := httptest.NewRecorder()
+	h.test(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "reachable") {
+		t.Fatalf("expected reachable message, got %s", res.Body.String())
+	}
+}
+
+func TestTestEndpointSuccess(t *testing.T) {
+	paddle := &mockPaddle{
+		createTransactionFn: func(ctx context.Context, priceID string, customData map[string]string) (string, error) {
+			return "https://checkout.paddle.com/test", nil
+		},
+	}
+	h := NewHandler(nil, paddle)
+	req := billingRequest(http.MethodGet, "/test", nil)
+	res := httptest.NewRecorder()
+	h.test(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "connectivity successful") {
+		t.Fatalf("expected success message, got %s", res.Body.String())
 	}
 }
 
@@ -673,6 +793,134 @@ func TestStatusReturnsErrorOnFetchFailure(t *testing.T) {
 	}
 }
 
+func TestStatusBackfillsPeriodEndFromPaddle(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("premium", "active", nil, false, false),
+	)
+	mock.ExpectQuery("SELECT id FROM public.subscriptions").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"id"}).AddRow("sub_123"),
+	)
+	mock.ExpectQuery("SELECT COUNT.*collection_items").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+	mock.ExpectQuery("SELECT COUNT.*wishlist_items").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+	mock.ExpectQuery("SELECT COUNT.*wishlist_shares").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+	mock.ExpectExec("UPDATE public.subscriptions").WithArgs(pgxmock.AnyArg(), "user-1").WillReturnResult(
+		pgxmock.NewResult("UPDATE", 1),
+	)
+
+	paddle := &mockPaddle{
+		getSubscriptionPeriodEndFn: func(ctx context.Context, subscriptionID string) (string, error) {
+			if subscriptionID != "sub_123" {
+				t.Errorf("expected subscriptionID sub_123, got %s", subscriptionID)
+			}
+			return "2026-07-01T00:00:00Z", nil
+		},
+	}
+
+	h := NewHandler(mock, paddle)
+	req := billingRequest(http.MethodGet, "/status", nil)
+	res := httptest.NewRecorder()
+	h.status(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"currentPeriodEnd":"2026-07-01T00:00:00Z"`) {
+		t.Fatalf("expected backfilled period end, got %s", res.Body.String())
+	}
+}
+
+func TestStatusBackfillSkippedWhenPeriodEndSet(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	cpe := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery("SELECT").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("premium", "active", &cpe, false, false),
+	)
+	mock.ExpectQuery("SELECT COUNT.*collection_items").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+	mock.ExpectQuery("SELECT COUNT.*wishlist_items").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+	mock.ExpectQuery("SELECT COUNT.*wishlist_shares").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+
+	h := NewHandler(mock, &mockPaddle{
+		getSubscriptionPeriodEndFn: func(ctx context.Context, subscriptionID string) (string, error) {
+			t.Fatal("should not call Paddle when period end is already set")
+			return "", nil
+		},
+	})
+	req := billingRequest(http.MethodGet, "/status", nil)
+	res := httptest.NewRecorder()
+	h.status(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"currentPeriodEnd":"2026-08-01T00:00:00Z"`) {
+		t.Fatalf("expected existing period end, got %s", res.Body.String())
+	}
+}
+
+func TestStatusBackfillHandlesMissingSubscription(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("premium", "active", nil, false, false),
+	)
+	mock.ExpectQuery("SELECT id FROM public.subscriptions").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"id"}),
+	)
+	mock.ExpectQuery("SELECT COUNT.*collection_items").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+	mock.ExpectQuery("SELECT COUNT.*wishlist_items").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+	mock.ExpectQuery("SELECT COUNT.*wishlist_shares").WithArgs("user-1").WillReturnRows(
+		pgxmock.NewRows([]string{"count"}).AddRow(0),
+	)
+
+	h := NewHandler(mock, &mockPaddle{
+		getSubscriptionPeriodEndFn: func(ctx context.Context, subscriptionID string) (string, error) {
+			t.Fatal("should not call Paddle when subscription is missing")
+			return "", nil
+		},
+	})
+	req := billingRequest(http.MethodGet, "/status", nil)
+	res := httptest.NewRecorder()
+	h.status(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
 // --- Handler: setVIP tests ---
 
 func TestSetVIPRejectsNonAdmin(t *testing.T) {
@@ -809,8 +1057,9 @@ func TestSetVIPReturnsErrorOnUpdateFailure(t *testing.T) {
 // --- Handler: webhook tests ---
 
 func TestWebhookAcceptsValidSignature(t *testing.T) {
+	withSandboxEnv(t)
 	// Use unknown event type so webhook returns early after signature check
-	payload := `{"event_type":"unknown.event","data":{}}`
+	payload := `{"event_id":"evt_1","event_type":"unknown.event","data":{}}`
 	sig := makePaddleSignature([]byte(payload), "")
 	h := NewHandler(nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
@@ -900,18 +1149,24 @@ func TestWebhookRejectsMalformedSignatureFormat(t *testing.T) {
 }
 
 func TestWebhookTransactionCompleted(t *testing.T) {
+	withSandboxEnv(t)
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mock.Close()
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "transaction.completed").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec(`INSERT INTO public.subscriptions`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
 
 	h := NewHandler(mock, nil)
-	payload := `{"event_type":"transaction.completed","data":{"id":"txn_1","customer_id":"ctm_1","status":"completed","custom_data":{"user_id":"user-1"},"current_billing_period":{"ends_at":"2026-07-01T00:00:00Z"},"items":[{"price":{"id":"pri_1"}}]}}`
+	payload := `{"event_id":"evt_1","event_type":"transaction.completed","data":{"id":"txn_1","customer_id":"ctm_1","status":"completed","custom_data":{"user_id":"user-1"},"current_billing_period":{"ends_at":"2026-07-01T00:00:00Z"},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -923,18 +1178,24 @@ func TestWebhookTransactionCompleted(t *testing.T) {
 }
 
 func TestWebhookSubscriptionCreated(t *testing.T) {
+	withSandboxEnv(t)
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mock.Close()
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "subscription.created").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec(`INSERT INTO public.subscriptions`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
 
 	h := NewHandler(mock, nil)
-	payload := `{"event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"current_billing_period":{"ends_at":"2026-07-01T00:00:00Z"},"items":[{"price":{"id":"pri_1"}}]}}`
+	payload := `{"event_id":"evt_1","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"current_billing_period":{"ends_at":"2026-07-01T00:00:00Z"},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -946,18 +1207,24 @@ func TestWebhookSubscriptionCreated(t *testing.T) {
 }
 
 func TestWebhookSubscriptionUpdated(t *testing.T) {
+	withSandboxEnv(t)
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mock.Close()
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "subscription.updated").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec(`INSERT INTO public.subscriptions`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
 
 	h := NewHandler(mock, nil)
-	payload := `{"event_type":"subscription.updated","data":{"id":"sub_1","customer_id":"ctm_1","status":"past_due","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	payload := `{"event_id":"evt_1","event_type":"subscription.updated","data":{"id":"sub_1","customer_id":"ctm_1","status":"past_due","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -969,18 +1236,24 @@ func TestWebhookSubscriptionUpdated(t *testing.T) {
 }
 
 func TestWebhookSubscriptionCanceled(t *testing.T) {
+	withSandboxEnv(t)
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mock.Close()
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "subscription.canceled").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec(`INSERT INTO public.subscriptions`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
 
 	h := NewHandler(mock, nil)
-	payload := `{"event_type":"subscription.canceled","data":{"id":"sub_1","customer_id":"ctm_1","status":"canceled","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	payload := `{"event_id":"evt_1","event_type":"subscription.canceled","data":{"id":"sub_1","customer_id":"ctm_1","status":"canceled","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -992,18 +1265,24 @@ func TestWebhookSubscriptionCanceled(t *testing.T) {
 }
 
 func TestWebhookSubscriptionPaused(t *testing.T) {
+	withSandboxEnv(t)
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mock.Close()
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "subscription.paused").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec(`INSERT INTO public.subscriptions`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
 
 	h := NewHandler(mock, nil)
-	payload := `{"event_type":"subscription.paused","data":{"id":"sub_1","customer_id":"ctm_1","status":"paused","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	payload := `{"event_id":"evt_1","event_type":"subscription.paused","data":{"id":"sub_1","customer_id":"ctm_1","status":"paused","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -1015,8 +1294,9 @@ func TestWebhookSubscriptionPaused(t *testing.T) {
 }
 
 func TestWebhookUnknownEventType(t *testing.T) {
+	withSandboxEnv(t)
 	h := NewHandler(nil, nil)
-	payload := `{"event_type":"invoice.created","data":{"id":"inv_1"}}`
+	payload := `{"event_id":"evt_1","event_type":"invoice.created","data":{"id":"inv_1"}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -1028,8 +1308,9 @@ func TestWebhookUnknownEventType(t *testing.T) {
 }
 
 func TestWebhookMissingUserID(t *testing.T) {
+	withSandboxEnv(t)
 	h := NewHandler(nil, nil)
-	payload := `{"event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{},"items":[{"price":{"id":"pri_1"}}]}}`
+	payload := `{"event_id":"evt_1","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -1041,18 +1322,24 @@ func TestWebhookMissingUserID(t *testing.T) {
 }
 
 func TestWebhookDBFailure(t *testing.T) {
+	withSandboxEnv(t)
 	mock, err := pgxmock.NewPool()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mock.Close()
 
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "subscription.created").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 	mock.ExpectExec(`INSERT INTO public.subscriptions`).
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnError(errors.New("db error"))
+	mock.ExpectRollback()
 
 	h := NewHandler(mock, nil)
-	payload := `{"event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	payload := `{"event_id":"evt_1","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
 	res := httptest.NewRecorder()
@@ -1064,6 +1351,7 @@ func TestWebhookDBFailure(t *testing.T) {
 }
 
 func TestWebhookInvalidJSON(t *testing.T) {
+	withSandboxEnv(t)
 	h := NewHandler(nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(`{invalid`))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
@@ -1072,6 +1360,132 @@ func TestWebhookInvalidJSON(t *testing.T) {
 
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", res.Code)
+	}
+}
+
+func TestWebhookDuplicateEventReturns200(t *testing.T) {
+	withSandboxEnv(t)
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_dup", "subscription.created").
+		WillReturnResult(pgxmock.NewResult("INSERT", 0))
+	mock.ExpectRollback()
+
+	h := NewHandler(mock, nil)
+	payload := `{"event_id":"evt_dup","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
+	req.Header.Set("paddle-signature", "ts=123;h1=abc")
+	res := httptest.NewRecorder()
+	h.webhook(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200 for duplicate event, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
+func TestWebhookEventInsertFailureReturns500(t *testing.T) {
+	withSandboxEnv(t)
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "subscription.created").
+		WillReturnError(errors.New("insert failed"))
+	mock.ExpectRollback()
+
+	h := NewHandler(mock, nil)
+	payload := `{"event_id":"evt_1","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
+	req.Header.Set("paddle-signature", "ts=123;h1=abc")
+	res := httptest.NewRecorder()
+	h.webhook(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
+func TestWebhookSubscriptionUpsertFailureRollsBack(t *testing.T) {
+	withSandboxEnv(t)
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "subscription.created").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec(`INSERT INTO public.subscriptions`).
+		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnError(errors.New("upsert failed"))
+	mock.ExpectRollback()
+
+	h := NewHandler(mock, nil)
+	payload := `{"event_id":"evt_1","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
+	req.Header.Set("paddle-signature", "ts=123;h1=abc")
+	res := httptest.NewRecorder()
+	h.webhook(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
+func TestWebhookRejectsUnsignedInProduction(t *testing.T) {
+	os.Setenv("PADDLE_ENVIRONMENT", "production")
+	defer os.Unsetenv("PADDLE_ENVIRONMENT")
+
+	h := NewHandler(nil, nil)
+	payload := `{"event_id":"evt_1","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
+	req.Header.Set("paddle-signature", "ts=123;h1=abc")
+	res := httptest.NewRecorder()
+	h.webhook(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unsigned production webhook, got %d: %s", res.Code, res.Body.String())
+	}
+}
+
+func TestWebhookTransactionCompletedUsesSubscriptionID(t *testing.T) {
+	withSandboxEnv(t)
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO public.paddle_webhook_events`).
+		WithArgs("evt_1", "transaction.completed").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectExec(`INSERT INTO public.subscriptions`).
+		WithArgs("sub_456", pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+	mock.ExpectCommit()
+
+	h := NewHandler(mock, nil)
+	payload := `{"event_id":"evt_1","event_type":"transaction.completed","data":{"id":"txn_1","subscription_id":"sub_456","customer_id":"ctm_1","status":"completed","custom_data":{"user_id":"user-1"},"current_billing_period":{"ends_at":"2026-07-01T00:00:00Z"},"items":[{"price":{"id":"pri_1"}}]}}`
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
+	req.Header.Set("paddle-signature", "ts=123;h1=abc")
+	res := httptest.NewRecorder()
+	h.webhook(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
 	}
 }
 
@@ -1120,6 +1534,7 @@ func TestMapPaddleStatus(t *testing.T) {
 // --- Webhook export test ---
 
 func TestWebhookExportDelegatesToInternal(t *testing.T) {
+	withSandboxEnv(t)
 	h := NewHandler(nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(`{invalid`))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")
@@ -1143,5 +1558,13 @@ func TestNoOpPaddleClientReturnsErrors(t *testing.T) {
 	_, err = c.GetCustomerPortalURL(context.Background(), "ctm_1")
 	if err == nil {
 		t.Fatal("expected error from NoOpPaddleClient.GetCustomerPortalURL")
+	}
+}
+
+func TestNoOpPaddleClientGetSubscriptionPeriodEnd(t *testing.T) {
+	c := &NoOpPaddleClient{}
+	_, err := c.GetSubscriptionPeriodEnd(context.Background(), "sub_1")
+	if err == nil {
+		t.Fatal("expected error from NoOpPaddleClient.GetSubscriptionPeriodEnd")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewPaddleClient_Production(t *testing.T) {
@@ -18,13 +19,10 @@ func TestNewPaddleClient_Production(t *testing.T) {
 	if client.baseURL != "https://api.paddle.com" {
 		t.Errorf("expected baseURL 'https://api.paddle.com', got %s", client.baseURL)
 	}
-	if client.portalBase != "https://buy.paddle.com" {
-		t.Errorf("expected portalBase 'https://buy.paddle.com', got %s", client.portalBase)
-	}
-	if client.successURL != "https://audiofile.app/settings/billing?checkout=success" {
+	if client.successURL != "https://audiofile.app/account?checkout=success#billing" {
 		t.Errorf("unexpected successURL: %s", client.successURL)
 	}
-	if client.cancelURL != "https://audiofile.app/settings/billing?checkout=canceled" {
+	if client.cancelURL != "https://audiofile.app/account?checkout=canceled#billing" {
 		t.Errorf("unexpected cancelURL: %s", client.cancelURL)
 	}
 }
@@ -34,9 +32,6 @@ func TestNewPaddleClient_Sandbox(t *testing.T) {
 
 	if client.baseURL != "https://sandbox-api.paddle.com" {
 		t.Errorf("expected baseURL 'https://sandbox-api.paddle.com', got %s", client.baseURL)
-	}
-	if client.portalBase != "https://sandbox-buy.paddle.com" {
-		t.Errorf("expected portalBase 'https://sandbox-buy.paddle.com', got %s", client.portalBase)
 	}
 }
 
@@ -157,28 +152,274 @@ func TestPaddleClient_CreateTransaction_EmptyURL(t *testing.T) {
 }
 
 func TestPaddleClient_GetCustomerPortalURL_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/customers/ctm_123/portal-sessions" {
+			t.Errorf("expected path /customers/ctm_123/portal-sessions, got %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("expected Authorization header 'Bearer test-key', got %s", r.Header.Get("Authorization"))
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"urls": map[string]any{
+					"general": map[string]any{
+						"overview": "https://customer.paddle.com/overview",
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
 	client := &PaddleHTTPClient{
-		portalBase: "https://buy.paddle.com",
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
 	}
 
 	url, err := client.GetCustomerPortalURL(context.Background(), "ctm_123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	expected := "https://buy.paddle.com/portal/customers/ctm_123"
-	if url != expected {
-		t.Errorf("expected URL %s, got %s", expected, url)
+	if url != "https://customer.paddle.com/overview" {
+		t.Errorf("expected URL 'https://customer.paddle.com/overview', got %s", url)
 	}
 }
 
-func TestPaddleClient_GetCustomerPortalURL_EmptyID(t *testing.T) {
+func TestPaddleClient_GetCustomerPortalURL_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"type":   "invalid_request",
+				"detail": "Customer not found",
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	_, err := client.GetCustomerPortalURL(context.Background(), "ctm_invalid")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Paddle API error") {
+		t.Errorf("expected Paddle API error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_GetCustomerPortalURL_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("not-json"))
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	_, err := client.GetCustomerPortalURL(context.Background(), "ctm_123")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to decode response") {
+		t.Errorf("expected decode error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_GetCustomerPortalURL_EmptyOverview(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"urls": map[string]any{
+					"general": map[string]any{
+						"overview": "",
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	_, err := client.GetCustomerPortalURL(context.Background(), "ctm_123")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty portal overview URL") {
+		t.Errorf("expected empty portal overview URL error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_GetSubscriptionPeriodEnd_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/subscriptions/sub_123" {
+			t.Errorf("expected path /subscriptions/sub_123, got %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			t.Errorf("expected Authorization header 'Bearer test-key', got %s", r.Header.Get("Authorization"))
+		}
+
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"current_billing_period": map[string]any{
+					"ends_at": "2026-07-01T00:00:00Z",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	endsAt, err := client.GetSubscriptionPeriodEnd(context.Background(), "sub_123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if endsAt != "2026-07-01T00:00:00Z" {
+		t.Errorf("expected ends_at '2026-07-01T00:00:00Z', got %s", endsAt)
+	}
+}
+
+func TestPaddleClient_GetSubscriptionPeriodEnd_APIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("subscription not found"))
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	_, err := client.GetSubscriptionPeriodEnd(context.Background(), "sub_missing")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Paddle API error") {
+		t.Errorf("expected Paddle API error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_GetSubscriptionPeriodEnd_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("not-json"))
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	_, err := client.GetSubscriptionPeriodEnd(context.Background(), "sub_123")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to decode response") {
+		t.Errorf("expected decode error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_GetSubscriptionPeriodEnd_EmptySubscriptionID(t *testing.T) {
 	client := &PaddleHTTPClient{}
 
-	_, err := client.GetCustomerPortalURL(context.Background(), "")
+	_, err := client.GetSubscriptionPeriodEnd(context.Background(), "")
 	if err == nil {
-		t.Fatal("expected error for empty customer ID, got nil")
+		t.Fatal("expected error for empty subscription ID, got nil")
 	}
-	if !strings.Contains(err.Error(), "customer ID is required") {
-		t.Errorf("expected 'customer ID is required' error, got: %v", err)
+	if !strings.Contains(err.Error(), "subscription ID is required") {
+		t.Errorf("expected 'subscription ID is required' error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_CreateTransaction_NetworkError(t *testing.T) {
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    "http://localhost:1",
+		httpClient: &http.Client{Timeout: 100 * time.Millisecond},
+	}
+
+	_, err := client.CreateTransaction(context.Background(), "pri_test", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to call Paddle API") {
+		t.Errorf("expected network error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_CreateTransaction_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("not-json"))
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	_, err := client.CreateTransaction(context.Background(), "pri_test", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to decode response") {
+		t.Errorf("expected decode error, got: %v", err)
+	}
+}
+
+func TestPaddleClient_CreateTransaction_Non2xxPlainText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	client := &PaddleHTTPClient{
+		apiKey:     "test-key",
+		baseURL:    server.URL,
+		httpClient: server.Client(),
+	}
+
+	_, err := client.CreateTransaction(context.Background(), "pri_test", nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Paddle API error") {
+		t.Errorf("expected Paddle API error, got: %v", err)
 	}
 }
