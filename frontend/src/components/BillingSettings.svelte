@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { apiFetch } from '../lib/api';
 	import { supabase } from '../lib/supabase';
+	import { fetchBillingConfig, initPaddle, openPaddleCheckout } from '../lib/paddle';
 
 	let status = $state<any>(null);
 	let config = $state<any>(null);
 	let loading = $state(true);
 	let processing = $state(false);
-	let paddleReady = $state(false);
 
 	async function loadBillingStatus() {
 		try {
@@ -21,9 +21,7 @@
 
 	async function loadBillingConfig() {
 		try {
-			const res = await apiFetch('/api/billing/config');
-			config = await res.json();
-			// Load + initialize Paddle.js once we have the client token
+			config = await fetchBillingConfig();
 			if (config?.clientToken) {
 				await initPaddle(config.clientToken, config.environment);
 			}
@@ -32,55 +30,12 @@
 		}
 	}
 
-	declare global {
-		interface Window { Paddle: any }
-	}
-
-	function loadPaddleScript(): Promise<void> {
-		return new Promise((resolve, reject) => {
-			if (window.Paddle) { resolve(); return; }
-			const script = document.createElement('script');
-			script.src = 'https://cdn.paddle.com/paddle/v2/paddle.js';
-			script.async = true;
-			script.onload = () => resolve();
-			script.onerror = () => reject(new Error('Failed to load Paddle.js'));
-			document.head.appendChild(script);
-		});
-	}
-
-	async function initPaddle(token: string, environment: string) {
-		try {
-			await loadPaddleScript();
-			// Paddle.js v2: set environment BEFORE Initialize.
-			// Sandbox accounts MUST call Paddle.Environment.set('sandbox')
-			// so Paddle.js routes to sandbox-checkout-service.paddle.com
-			// instead of the production checkout-service.paddle.com.
-			if (environment !== 'production' && window.Paddle.Environment) {
-				window.Paddle.Environment.set('sandbox');
-			}
-			window.Paddle.Initialize({
-				token,
-				eventCallback: (event: any) => {
-					console.log('[PADDLE DEBUG] Global event:', event);
-				}
-			});
-			paddleReady = true;
-		} catch (err) {
-			console.error('Paddle.js init failed', err);
-		}
-	}
-
 	async function handleCheckout() {
 		if (!config?.premiumMonthlyPriceId || config.premiumMonthlyPriceId.includes('XXXX')) {
 			alert('Premium subscription not yet configured.');
 			return;
 		}
-		if (!paddleReady || !window.Paddle) {
-			alert('Payment system is still loading. Please try again in a moment.');
-			return;
-		}
 
-		// Get the authenticated user's ID so the webhook can attribute the subscription
 		const { data: { session } } = await supabase.auth.getSession();
 		const userId = session?.user?.id;
 		if (!userId) {
@@ -90,25 +45,20 @@
 
 		processing = true;
 		try {
-			window.Paddle.Checkout.open({
-				items: [{ priceId: config.premiumMonthlyPriceId, quantity: 1 }],
-				customData: { user_id: userId },
-				settings: {
-					successUrl: window.location.origin + '/account?checkout=success',
-					theme: 'light'
-				},
-				eventCallback: (event: any) => {
-					if (event?.name === 'checkout.completed') {
-						processing = false;
-						loadBillingStatus();
-					}
+			openPaddleCheckout({
+				priceId: config.premiumMonthlyPriceId,
+				userId,
+				successUrl: window.location.origin + '/account?checkout=success#billing',
+				onComplete: () => {
+					processing = false;
+					loadBillingStatus();
 				}
 			});
 		} catch (err) {
 			console.error('Paddle checkout failed', err);
 			alert('Failed to open checkout. Please try again.');
+			processing = false;
 		}
-		processing = false;
 	}
 
 	async function handlePortal() {

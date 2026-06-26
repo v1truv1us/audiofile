@@ -25,6 +25,7 @@
 	let isSharedView = $state(false);
 	let showPaywall = $state(false);
 	let paywallAction = $state<'wishlist' | 'share'>('wishlist');
+	let shareDialog: { refreshShares: () => Promise<void> } | undefined = $state(undefined);
 
 	let form = $state({
 		title: '',
@@ -202,10 +203,10 @@
 	</div>
 	{#if error && !showAddForm && !showShareDialog}<p class="text-xs text-red-700">{error}</p>{/if}
 
-	<PaywallModal isOpen={showPaywall} actionType={paywallAction} onClose={() => showPaywall = false} />
+	<PaywallModal isOpen={showPaywall} actionType={paywallAction} onClose={() => showPaywall = false} onComplete={() => { showPaywall = false; if (paywallAction === 'share') { shareDialog?.refreshShares(); } else { fetchWishlist(); } }} />
 
 	{#if showShareDialog}
-		<ShareDialog onclose={() => showShareDialog = false} onPaywall={() => { paywallAction = 'share'; showPaywall = true; }} />
+		<ShareDialog bind:this={shareDialog} onclose={() => showShareDialog = false} onPaywall={() => { paywallAction = 'share'; showPaywall = true; }} />
 	{/if}
 
 	{#if showAddForm}

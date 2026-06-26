@@ -148,6 +148,10 @@
 		}
 	}
 
+	export function refreshShares() {
+		return fetchOutgoingShares();
+	}
+
 	$effect(() => {
 		fetchOutgoingShares();
 	});

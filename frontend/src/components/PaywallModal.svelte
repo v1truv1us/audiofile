@@ -1,13 +1,21 @@
 <script lang="ts">
+	import { fetchBillingConfig, initPaddle, openPaddleCheckout } from '../lib/paddle';
+	import { supabase } from '../lib/supabase';
+
 	type ActionType = 'collection' | 'wishlist' | 'share';
 
 	type Props = {
 		isOpen: boolean;
 		actionType: ActionType;
 		onClose: () => void;
+		onComplete?: () => void;
 	};
 
-	let { isOpen, actionType, onClose }: Props = $props();
+	let { isOpen, actionType, onClose, onComplete }: Props = $props();
+
+	let config = $state<any>(null);
+	let loading = $state(false);
+	let processing = $state(false);
 
 	const messages: Record<ActionType, { title: string; body: string }> = {
 		collection: {
@@ -30,22 +38,55 @@
 		}
 	}
 
-	async function handleCheckout() {
+	async function loadConfig() {
+		loading = true;
+		processing = false;
 		try {
-			const { apiFetch } = await import('../lib/api');
-			const res = await apiFetch('/api/billing/checkout', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ priceId: 'price_premium_monthly' }),
-			});
-			const data = await res.json();
-			if (data.checkoutUrl) {
-				window.location.href = data.checkoutUrl;
+			config = await fetchBillingConfig();
+			if (config?.clientToken) {
+				await initPaddle(config.clientToken, config.environment);
 			}
-		} catch {
-			alert('Failed to initiate checkout. Please try again.');
+		} catch (err) {
+			console.error('Failed to load billing config', err);
+		} finally {
+			loading = false;
 		}
 	}
+
+	async function handleCheckout() {
+		if (!config?.premiumMonthlyPriceId || config.premiumMonthlyPriceId.includes('XXXX')) {
+			alert('Premium subscription not yet configured.');
+			return;
+		}
+		const { data: { session } } = await supabase.auth.getSession();
+		const userId = session?.user?.id;
+		if (!userId) {
+			alert('Please sign in again to upgrade.');
+			return;
+		}
+		processing = true;
+		try {
+			openPaddleCheckout({
+				priceId: config.premiumMonthlyPriceId,
+				userId,
+				successUrl: window.location.origin + '/account?checkout=success#billing',
+				onComplete: () => {
+					processing = false;
+					onComplete?.();
+				}
+			});
+		} catch (err) {
+			console.error('Paddle checkout failed', err);
+			alert('Failed to open checkout. Please try again.');
+			processing = false;
+		}
+	}
+
+	$effect(() => {
+		if (isOpen) {
+			loadConfig();
+		}
+	});
 </script>
 
 {#if isOpen}
@@ -70,13 +111,18 @@
 			<p class="text-sm text-gold-dark mb-6 leading-relaxed">{messages[actionType].body}</p>
 
 			<div class="flex flex-col gap-3">
-				<button
-					type="button"
-					onclick={handleCheckout}
-					class="w-full bg-espresso hover:bg-espresso/90 text-gold font-semibold py-3 px-4 rounded transition-colors text-xs uppercase tracking-wider"
-				>
-					Upgrade to Premium — $5/mo
-				</button>
+				{#if loading}
+					<div class="text-center py-2 text-gold-muted text-xs">Loading...</div>
+				{:else}
+					<button
+						type="button"
+						disabled={processing}
+						onclick={handleCheckout}
+						class="w-full bg-espresso hover:bg-espresso/90 text-gold font-semibold py-3 px-4 rounded transition-colors text-xs uppercase tracking-wider disabled:opacity-50"
+					>
+						{processing ? 'Processing...' : 'Upgrade to Premium — $5/mo'}
+					</button>
+				{/if}
 				<button
 					type="button"
 					onclick={onClose}

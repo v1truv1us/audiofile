@@ -215,7 +215,7 @@
 	{#if shareMessage}<p class="text-xs text-gold-dark">{shareMessage}</p>{/if}
 	{#if error && !showAddForm}<p class="text-xs text-red-700">{error}</p>{/if}
 
-	<PaywallModal isOpen={showPaywall} actionType="collection" onClose={() => showPaywall = false} />
+	<PaywallModal isOpen={showPaywall} actionType="collection" onClose={() => showPaywall = false} onComplete={() => { showPaywall = false; fetchCollection(); }} />
 
 	{#if showAddForm && !isSharedView}
 		<div class="bg-white border border-gold/50 rounded-lg p-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
