@@ -43,6 +43,7 @@ specs/
 # Local agent/tooling state (not source)
 .crew/
 .pi/
+.opencode/
 /.crew/
 /.crew
 !.crew/artifacts/
