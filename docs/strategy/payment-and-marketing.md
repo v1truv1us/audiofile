@@ -191,14 +191,18 @@ Create blog posts:
 - [ ] Complete business verification (1-3 days)
 - [ ] Create "Premium Monthly" product in Paddle dashboard ($5/month)
 - [ ] Copy the price ID (format: pri_01hxyz...)
-- [ ] Update `frontend/src/components/BillingSettings.svelte` with the real price ID
+- [ ] Set `PADDLE_PREMIUM_MONTHLY_PRICE_ID` environment variable
 - [ ] Set webhook URL in Paddle dashboard: `https://audiofile.app/api/billing/webhook`
+- [ ] Configure checkout return URL in Paddle dashboard: `https://audiofile.app/account#billing`
 - [ ] Add environment variables to production:
   - `PADDLE_API_KEY` (from Paddle Dashboard > Developer Tools > Authentication)
   - `PADDLE_WEBHOOK_SECRET` (from Paddle Dashboard > Developer Tools > Notifications)
   - `PADDLE_ENVIRONMENT=production`
+  - `PADDLE_CLIENT_TOKEN` (from Paddle Dashboard > Developer Tools > Authentication)
+  - `PADDLE_PREMIUM_MONTHLY_PRICE_ID` (the price ID copied above)
   - `APP_BASE_URL=https://audiofile.app`
 - [ ] Test checkout flow end-to-end in sandbox mode
+- [ ] Billing e2e tests are deferred
 - [ ] Switch to production mode and test with real payment
 
 ### Phase 2: Marketing Foundation (Week 2-3)

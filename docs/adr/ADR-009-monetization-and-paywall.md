@@ -1,18 +1,18 @@
 # ADR-009: Monetization, Paywalling, and VIP Exemption
 
 ## Status
-Proposed
+Accepted
 
 ## Context
 AudioFile is transitioning from a completely free application to a freemium monetization model. To support this, we require:
 1. **Subscription Tiers**: A **Free Tier** with item storage limits and a **Premium Tier** with unlimited storage and sharing.
 2. **VIP Exemption**: An administrative override mechanism to exempt specific users (e.g. friends, testers, VIP collectors) from subscription requirements or paywall limits.
-3. **Billing Integration**: Stripe integration for subscriptions, including secure webhook signature validation, checkout sessions, and a self-service customer portal.
+3. **Billing Integration**: Paddle integration for subscriptions, including secure webhook signature validation, Paddle.js overlay checkout, and a self-service customer portal.
 4. **Paywall Enforcements**: Guarding collection additions, wishlist additions, and wishlist sharing actions.
 5. **Downgrade Resilience**: If a user's premium subscription expires or is canceled, we must not delete any existing data. Instead, we disable adding new items or creating new shares until they are below the Free Tier limits or resubscribe.
 
 ### Key Security & Schema Challenges
-* **Profiles Table Publicity**: In ADR-008, the `public.profiles` table was made globally readable to support username searches (`Profiles are readable` SELECT USING `true`). Sensitive billing identifiers (Stripe Customer ID, Subscription ID, price ID, and payment status) must never be readable by other users.
+* **Profiles Table Publicity**: In ADR-008, the `public.profiles` table was made globally readable to support username searches (`Profiles are readable` SELECT USING `true`). Sensitive billing identifiers (Paddle Customer ID, Subscription ID, price ID, and payment status) must never be readable by other users.
 * **Self-Elevation Risk**: If administrative flags like `is_vip` and `is_admin` are placed on the `profiles` table, a standard user could potentially elevate their privileges by issuing direct updates via the client API (since users have UPDATE policy access to their own profile rows).
 
 ---
@@ -27,9 +27,12 @@ We will separate billing metadata from the public profile table into a dedicated
 
 To protect against self-elevation of administrative flags `is_vip` and `is_admin` (which are added to `public.profiles` to allow UI badge decoration), we will implement a PostgreSQL `BEFORE UPDATE` trigger that intercepts client-initiated profile changes and prevents standard users from altering their VIP or Admin statuses.
 
-#### Migration: `supabase/migrations/00004_monetization_and_billing.sql`
+#### Migrations: `supabase/migrations/00004_monetization_and_billing.sql` and `00005_paddle_migration.sql`
+
+The monetization schema was introduced in `00004_monetization_and_billing.sql` and later adapted for Paddle in `00005_paddle_migration.sql`. The relevant structure is:
+
 ```sql
--- Migration 00004: Monetization, Billing, and VIP Exemption
+-- Migration 00004/00005: Monetization, Billing, and VIP Exemption
 
 -- 1. Extend public.profiles with administrative and VIP flags
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_vip BOOLEAN NOT NULL DEFAULT false;
@@ -59,13 +62,13 @@ CREATE TRIGGER enforce_profile_elevation
 
 -- 3. Create public.subscriptions table (isolated from globally-readable profiles)
 CREATE TABLE IF NOT EXISTS public.subscriptions (
-    id                     TEXT PRIMARY KEY, -- Stripe Subscription ID
+    id                     TEXT PRIMARY KEY, -- Paddle Subscription ID
     user_id                UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
-    stripe_customer_id     TEXT UNIQUE,
+    paddle_customer_id     TEXT UNIQUE,
     price_id               TEXT,
     tier                   TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free', 'premium')),
     status                 TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN (
-        'active', 'trialing', 'past_due', 'canceled', 'unpaid', 'incomplete', 'incomplete_expired', 'inactive'
+        'active', 'trialing', 'past_due', 'canceled', 'unpaid', 'incomplete', 'incomplete_expired', 'inactive', 'paused'
     )),
     current_period_end     TIMESTAMPTZ,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -74,7 +77,7 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
 
 -- 4. Create indexes for high-performance querying
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON public.subscriptions(user_id);
-CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer_id ON public.subscriptions(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_paddle_customer_id ON public.subscriptions(paddle_customer_id);
 
 -- 5. Enable Row-Level Security
 ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
@@ -97,39 +100,36 @@ CREATE TRIGGER set_subscriptions_updated_at BEFORE UPDATE ON public.subscription
 
 A new endpoint suite `/api/billing` and admin suite `/api/admin` will be registered in the Go backend routing configuration:
 
-#### A. Checkout Session Creation (`POST /api/billing/checkout`)
-Initiates the Stripe checkout session. It returns the session URL for client-side redirection.
+#### A. Billing Configuration (`GET /api/billing/config`)
+Returns the Paddle price ID, environment, and client token needed to initialize Paddle.js on the frontend.
 * **Authentication**: Required.
-* **Request Body**:
-  ```json
-  {
-    "priceId": "price_1Oxxxxxxxxxxxxxxxxxxxxxx"
-  }
-  ```
 * **Success Response (200 OK)**:
   ```json
   {
-    "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_test_..."
+    "premiumMonthlyPriceId": "pri_01hxyz...",
+    "environment": "sandbox",
+    "clientToken": "test_abc123..."
   }
   ```
 * **Error Responses**:
-  * `400 Bad Request`: Invalid or missing `priceId`.
   * `401 Unauthorized`: Missing or invalid bearer token.
-  * `500 Internal Server Error`: Failed to talk to Stripe API.
+  * `500 Internal Server Error`: Failed to load billing configuration.
+
+`POST /api/billing/checkout` remains implemented for server-side transaction creation, but the current overlay checkout flow does not use it.
 
 #### B. Customer Portal Session (`POST /api/billing/portal`)
-Creates a Stripe Customer Portal link so users can manage payment methods, download invoices, or cancel/upgrade plans.
+Creates a Paddle Customer Portal session so users can manage payment methods, download invoices, or cancel/upgrade plans.
 * **Authentication**: Required.
 * **Request Body**: None (inferred from JWT authenticated context).
 * **Success Response (200 OK)**:
   ```json
   {
-    "portalUrl": "https://billing.stripe.com/p/session/test_..."
+    "portalUrl": "https://checkout.paddle.com/customer-portal/cm_..."
   }
   ```
 * **Error Responses**:
   * `401 Unauthorized`: Missing or invalid bearer token.
-  * `404 Not Found`: User does not have an active Stripe customer profile.
+  * `404 Not Found`: User does not have an active Paddle customer profile.
   * `500 Internal Server Error`: Failed to create portal session.
 
 #### C. Billing & Usage Status (`GET /api/billing/status`)
@@ -186,17 +186,17 @@ Allows administrators to manually override a user's VIP status.
   * `401 Unauthorized`: Unauthenticated.
   * `403 Forbidden`: Authenticated, but not an admin.
 
-#### E. Stripe Webhook Ingest Route (`POST /api/billing/webhook`)
-Handles real-time asynchronous callbacks from Stripe.
-* **Authentication**: None (Stripe Signature Header verified).
-* **Headers**: `Stripe-Signature: t=16123...,v1=4f3a...`
+#### E. Paddle Webhook Ingest Route (`POST /api/billing/webhook`)
+Handles real-time asynchronous callbacks from Paddle.
+* **Authentication**: None (Paddle signature header verified).
+* **Headers**: `Paddle-Signature: pds_live_...`
 * **Response**: `200 OK` (with small confirmation payload) on successful ingestion.
 
 ---
 
 ### 3. Backend Service Architecture & Paywall Middleware
 
-To support proper testing and enforce limits securely, we define boundaries between Stripe API clients, database query structures, and handler layers.
+To support proper testing and enforce limits securely, we define boundaries between Paddle API clients, database query structures, and handler layers.
 
 #### Limits Definitions (`internal/billing/limits.go`)
 Limits are represented as constants and tied directly to check functions.
@@ -210,17 +210,20 @@ const (
 )
 ```
 
-#### Testable Stripe API Interface (`internal/billing/stripe.go`)
+#### Testable Paddle API Interface (`internal/billing/paddle_client.go`)
 By isolating external API dependencies within a mockable Go interface, we can test 100% of the checkout, portal, and webhook code routes, keeping test coverage $\ge 90\%$.
 ```go
 package billing
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
-type StripeClient interface {
-	CreateCustomer(ctx context.Context, email, userID string) (string, error)
-	CreateCheckoutSession(ctx context.Context, customerID, priceID, successURL, cancelURL, clientRefID string) (string, error)
-	CreatePortalSession(ctx context.Context, customerID, returnURL string) (string, error)
+type PaddleClient interface {
+	CreateTransaction(ctx context.Context, priceID, successURL, cancelURL, userID string) (string, error)
+	GetCustomerPortalURL(ctx context.Context, customerID string) (string, error)
+	GetSubscriptionPeriodEnd(ctx context.Context, subscriptionID string) (time.Time, error)
 }
 ```
 
@@ -365,9 +368,11 @@ func GuardLimit(ctx context.Context, pool dbPool, userID string, action string) 
 The Svelte-based frontend will implement subscription dashboards, billing management buttons, non-intrusive upgrade notices, and paywall intercept modals.
 
 #### A. Billing Portal & Settings Component (`frontend/src/components/BillingSettings.svelte`)
+Loads Paddle.js, fetches `/api/billing/config`, and opens the Paddle.js overlay checkout.
 ```svelte
 <script lang="ts">
 	import { apiFetch } from '../lib/api';
+	import { fetchBillingConfig, loadPaddleScript, initPaddle, openPaddleCheckout } from '../lib/paddle';
 	
 	let status = $state<any>(null);
 	let loading = $state(true);
@@ -387,14 +392,16 @@ The Svelte-based frontend will implement subscription dashboards, billing manage
 	async function handleCheckout() {
 		processing = true;
 		try {
-			const res = await apiFetch('/api/billing/checkout', {
-				method: 'POST',
-				body: JSON.stringify({ priceId: 'price_premium_monthly' })
+			const config = await fetchBillingConfig();
+			await loadPaddleScript();
+			const paddle = await initPaddle(config.clientToken, config.environment);
+			await openPaddleCheckout({
+				priceId: config.premiumMonthlyPriceId,
+				userId: status.userId,
+				successUrl: window.location.origin + '/account?checkout=success#billing',
+				paddle,
+				onComplete: () => loadBillingStatus()
 			});
-			const data = await res.json();
-			if (data.checkoutUrl) {
-				window.location.href = data.checkoutUrl;
-			}
 		} catch (err) {
 			alert('Failed to initiate checkout. Please try again.');
 		} finally {
@@ -523,7 +530,7 @@ Displays a warning message if a user's subscription downgrades or is close to li
 				<p class="text-xs text-amber-700 mt-1">
 					Your account is currently over its limit due to a tier change or plan expiration. Your records are preserved safely, but you will not be able to add new items or share wishlists until you upgrade your subscription.
 				</p>
-				<a href="/settings/billing" class="inline-block mt-2.5 text-xs font-bold text-amber-900 hover:underline">
+				<a href="/account#billing" class="inline-block mt-2.5 text-xs font-bold text-amber-900 hover:underline">
 					Upgrade Now &rarr;
 				</a>
 			</div>
@@ -533,15 +540,18 @@ Displays a warning message if a user's subscription downgrades or is close to li
 ```
 
 #### C. Intercept Overlay Notification (`frontend/src/components/PaywallModal.svelte`)
-Triggered dynamically when a mutation returns a limit-exceeded error code.
+Triggered dynamically when a mutation returns a limit-exceeded error code. It fetches `/api/billing/config` and opens the Paddle.js overlay checkout.
 ```svelte
 <script lang="ts">
+	import { fetchBillingConfig, loadPaddleScript, initPaddle, openPaddleCheckout } from '../lib/paddle';
+
 	interface Props {
 		isOpen: boolean;
 		actionType: 'collection' | 'wishlist' | 'share';
 		onClose: () => void;
+		onComplete?: () => void;
 	}
-	let { isOpen, actionType, onClose }: Props = $props();
+	let { isOpen, actionType, onClose, onComplete }: Props = $props();
 
 	let details = $derived({
 		collection: {
@@ -557,6 +567,23 @@ Triggered dynamically when a mutation returns a limit-exceeded error code.
 			desc: 'Direct wishlist sharing to fellow collectors is capped at 1 share for Free accounts. Upgrade for unlimited sharing.',
 		}
 	}[actionType]);
+
+	async function handleUpgrade() {
+		try {
+			const config = await fetchBillingConfig();
+			await loadPaddleScript();
+			const paddle = await initPaddle(config.clientToken, config.environment);
+			await openPaddleCheckout({
+				priceId: config.premiumMonthlyPriceId,
+				userId: currentUserId,
+				successUrl: window.location.origin + '/account?checkout=success#billing',
+				paddle,
+				onComplete: () => { if (onComplete) onComplete(); }
+			});
+		} catch (err) {
+			alert('Failed to initiate checkout. Please try again.');
+		}
+	}
 </script>
 
 {#if isOpen}
@@ -571,9 +598,11 @@ Triggered dynamically when a mutation returns a limit-exceeded error code.
 			<p class="text-sm text-gold-dark mb-6 leading-relaxed">{details.desc}</p>
 			
 			<div class="space-y-3">
-				<a href="/settings/billing" class="block w-full bg-espresso hover:bg-espresso-dark text-gold font-semibold py-3 px-4 rounded text-xs uppercase tracking-wider">
+				<button
+					onclick={handleUpgrade}
+					class="block w-full bg-espresso hover:bg-espresso-dark text-gold font-semibold py-3 px-4 rounded text-xs uppercase tracking-wider">
 					Unlock Unlimited with Premium
-				</a>
+				</button>
 				<button onclick={onClose} class="text-xs text-gold-dark hover:text-espresso font-semibold tracking-wider uppercase pt-2">
 					Maybe Later
 				</button>
@@ -590,10 +619,12 @@ Triggered dynamically when a mutation returns a limit-exceeded error code.
 To prevent revenue loss, transaction synchronization failures, or customer frustration, the system addresses the following complex scenarios:
 
 #### A. Webhook Failure, Out-of-Order Delivery, & Verification
-* **Signature Guarding**: Every webhook callback checks Stripe’s `Stripe-Signature` timestamp-enforced header. Replays are immediately dropped.
+* **Signature Guarding**: Every webhook callback verifies Paddle's `Paddle-Signature` header. Replays are immediately dropped.
+* **Webhook Idempotency**: Actionable events are recorded in `public.paddle_webhook_events` (introduced in `supabase/migrations/00006_webhook_idempotency.sql`) keyed by `event_id`. If an event ID has already been processed, the handler returns 200 without reprocessing.
 * **Database Upserts (Idempotence)**: To prevent duplicate processing (e.g. from retries), webhook updates use SQL upsert statements (`INSERT ... ON CONFLICT (id) DO UPDATE`).
-* **Concurrency Handling**: If an `invoice.payment_succeeded` arrives before a `customer.subscription.created`, database queries check for pre-existing checkout state mappings rather than relying on exact delivery sequences.
-* **Stripe Webhook Delivery Delays**: If webhook delivery lags, the client-side checkout callback page `/settings/billing?checkout=success` displays a friendly polling screen while waiting up to 5 seconds for the database record to update:
+* **Sandbox Unsigned Fallback**: Unsigned webhooks are accepted only when `PADDLE_ENVIRONMENT=sandbox` and `PADDLE_WEBHOOK_SECRET` is empty. Production requires signature verification.
+* **Concurrency Handling**: If a `transaction.completed` arrives before a `subscription.created`, database queries check for pre-existing checkout state mappings rather than relying on exact delivery sequences.
+* **Paddle Webhook Delivery Delays**: If webhook delivery lags, the client-side checkout callback page `/account?checkout=success#billing` displays a friendly polling screen while waiting up to 5 seconds for the database record to update:
   ```ts
   // Polling loop for active membership status change
   async function pollSubscriptionStatus(retries = 5, delay = 1000) {
@@ -611,9 +642,9 @@ To prevent revenue loss, transaction synchronization failures, or customer frust
 * **Soft Downgrades**: As defined in **AD-4**, if a user cancels their subscription, existing items over the limit are never truncated or deleted. This preserves customer goodwill.
 * **Canceled Status Tracking**: The subscription table transitions status to `'canceled'`. The Go backend sees that their active status check (`IsPremium()`) evaluates to false, subsequently blocking write additions without modifying old data.
 
-#### C. Past Due and Unpaid Status Handling
-* **Grace Period**: When an automatic recurring charge fails, Stripe triggers an `invoice.payment_failed` event and places the subscription in `past_due`. 
-* **User Intercept**: During `past_due`, we allow a short grace period (e.g., 3 days) where the user remains Premium but sees a subtle notification banner: `"Payment overdue. Please update billing method to retain unlimited access"`. If payment fails after all retries, Stripe marks it `unpaid` or `canceled`, and the status degrades to inactive.
+#### C. Past Due, Unpaid, and Paused Status Handling
+* **Grace Period**: When an automatic recurring charge fails, Paddle places the subscription in `past_due` and later `paused`.
+* **User Intercept**: During `past_due`, we allow a short grace period where the user remains Premium but sees a subtle notification banner: `"Payment overdue. Please update billing method to retain unlimited access"`. If payment fails after all retries, Paddle marks it `unpaid` or `canceled`, and the status degrades to inactive.
 
 ---
 
@@ -621,5 +652,5 @@ To prevent revenue loss, transaction synchronization failures, or customer frust
 
 * **Security**: Billing metadata is securely isolated in `subscriptions`, preventing leakages via globally readable profile queries.
 * **Integrity**: Standard users cannot self-elevate to VIP or Admin via client-side endpoints, thanks to the PL/pgSQL database trigger guard.
-* **Testing**: High test coverage remains preserved because Stripe operations are routed behind mockable interfaces.
+* **Testing**: High test coverage remains preserved because Paddle operations are routed behind mockable interfaces.
 * **Customer Experience**: Soft downgrades ensure that users don't lose records when subscriptions lapse, making resubscription smooth.
