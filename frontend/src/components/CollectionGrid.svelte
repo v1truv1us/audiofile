@@ -1,5 +1,6 @@
 <script lang="ts">
 	import RecordCard from './RecordCard.svelte';
+	import PaywallModal from './PaywallModal.svelte';
 	import { apiFetch } from '../lib/api';
 	import { readBarcodeFromImage, scanBarcodeApi, type ReleaseSearchResult } from '../lib/barcode';
 	import { supabase } from '../lib/supabase';
@@ -28,6 +29,7 @@
 	let error = $state('');
 	let shareMessage = $state('');
 	let isSharedView = $state(false);
+	let showPaywall = $state(false);
 
 	let form = $state({
 		title: '',
@@ -119,6 +121,14 @@
 					coverUrl: form.coverUrl,
 				}),
 			});
+			if (res.status === 403) {
+				const text = await res.text();
+				if (text.includes('collection limit') || text.includes('limit')) {
+					showPaywall = true;
+					return;
+				}
+				throw new Error(text);
+			}
 			if (!res.ok) throw new Error(await res.text());
 			form = { title: '', artist: '', year: '', label: '', mediaCondition: 'VG', sleeveCondition: 'VG', purchasePrice: '', notes: '', coverUrl: '' };
 			showAddForm = false;
@@ -204,6 +214,8 @@
 	</div>
 	{#if shareMessage}<p class="text-xs text-gold-dark">{shareMessage}</p>{/if}
 	{#if error && !showAddForm}<p class="text-xs text-red-700">{error}</p>{/if}
+
+	<PaywallModal isOpen={showPaywall} actionType="collection" onClose={() => showPaywall = false} />
 
 	{#if showAddForm && !isSharedView}
 		<div class="bg-white border border-gold/50 rounded-lg p-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

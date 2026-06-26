@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/v1truv1us/audiofile/backend/internal/auth"
+	"github.com/v1truv1us/audiofile/backend/internal/billing"
 )
 
 type Release struct {
@@ -182,6 +183,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := auth.UserID(r.Context())
+
+	if err := billing.GuardLimit(r.Context(), h.pool, userID, "collection"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 
 	tx, err := h.pool.Begin(r.Context())
 	if err != nil {

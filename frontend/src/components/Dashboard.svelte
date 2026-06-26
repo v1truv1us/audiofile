@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { apiFetch } from '../lib/api';
+	import UpgradeBanner from './UpgradeBanner.svelte';
 
 	type Stats = {
 		collectionCount: number;
@@ -11,16 +12,21 @@
 	let stats: Stats = $state({ collectionCount: 0, forSaleCount: 0, wishlistCount: 0, totalValue: 0 });
 	let recent: any[] = $state([]);
 	let loading = $state(true);
+	let billingStatus = $state<any>(null);
 
 	async function fetchDashboard() {
 		loading = true;
 		try {
-			const [statsRes, collectionRes] = await Promise.all([
+			const [statsRes, collectionRes, billingRes] = await Promise.all([
 				apiFetch('/api/collection/stats'),
 				apiFetch('/api/collection?limit=3'),
+				apiFetch('/api/billing/status').catch(() => null),
 			]);
 			stats = await statsRes.json();
 			recent = await collectionRes.json();
+			if (billingRes && billingRes.ok) {
+				billingStatus = await billingRes.json();
+			}
 		} catch (e) {
 			console.error('Failed to fetch dashboard', e);
 		} finally {
@@ -38,6 +44,10 @@
 </script>
 
 <div class="space-y-10">
+	{#if billingStatus?.limits}
+		<UpgradeBanner limits={billingStatus.limits} tier={billingStatus.tier} />
+	{/if}
+
 	<div class="border-b border-gold-muted/30 pb-6">
 		<h1 class="font-serif text-4xl text-espresso mb-1 font-normal">Your Collection</h1>
 		<p class="text-gold-dark text-xs tracking-[0.12em] uppercase">

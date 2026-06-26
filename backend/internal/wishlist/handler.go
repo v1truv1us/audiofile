@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/v1truv1us/audiofile/backend/internal/auth"
+	"github.com/v1truv1us/audiofile/backend/internal/billing"
 )
 
 type WishlistItem struct {
@@ -125,6 +126,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := auth.UserID(r.Context())
+
+	if err := billing.GuardLimit(r.Context(), h.pool, userID, "wishlist"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 
 	var releaseID *string
 	if req.Label != "" || req.CoverURL != "" || req.Year != nil {
@@ -342,6 +348,12 @@ func (h *Handler) createShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	callerID := auth.UserID(r.Context())
+
+	if err := billing.GuardLimit(r.Context(), h.pool, callerID, "share"); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
 	var viewerID string
 	if err := h.pool.QueryRow(r.Context(), `
 		SELECT id::text

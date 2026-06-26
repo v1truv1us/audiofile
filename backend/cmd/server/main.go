@@ -19,6 +19,7 @@ import (
 	sentryhttp "github.com/getsentry/sentry-go/http"
 
 	"github.com/v1truv1us/audiofile/backend/internal/auth"
+	"github.com/v1truv1us/audiofile/backend/internal/billing"
 	"github.com/v1truv1us/audiofile/backend/internal/collection"
 	"github.com/v1truv1us/audiofile/backend/internal/profiles"
 	"github.com/v1truv1us/audiofile/backend/internal/releases"
@@ -103,12 +104,34 @@ func main() {
 		r.Mount("/public/collection", collection.NewHandler(pool).PublicRoutes())
 		r.Mount("/public/wishlist", wishlist.NewHandler(pool).PublicRoutes())
 
+		// Billing webhook (outside auth — uses Paddle signature verification)
+		var paddleClient billing.PaddleClient
+		if apiKey := os.Getenv("PADDLE_API_KEY"); apiKey != "" {
+			environment := os.Getenv("PADDLE_ENVIRONMENT")
+			if environment == "" {
+				environment = "sandbox"
+			}
+			appBaseURL := os.Getenv("APP_BASE_URL")
+			if appBaseURL == "" {
+				appBaseURL = "https://audiofile.app"
+			}
+			paddleClient = billing.NewPaddleClient(apiKey, environment, appBaseURL)
+			log.Printf("Paddle client initialized (environment: %s)", environment)
+		} else {
+			paddleClient = &billing.NoOpPaddleClient{}
+			log.Println("Warning: PADDLE_API_KEY not set, using no-op Paddle client")
+		}
+		billingHandler := billing.NewHandler(pool, paddleClient)
+		r.Post("/billing/webhook", billingHandler.Webhook)
+
 		// Authenticated routes
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(supabaseURL))
 			r.Mount("/collection", collection.NewHandler(pool).Routes())
 			r.Mount("/profiles", profiles.NewHandler(pool).Routes())
 			r.Mount("/wishlist", wishlist.NewHandler(pool).Routes())
+			r.Mount("/billing", billingHandler.Routes())
+			r.Mount("/admin/billing", billingHandler.AdminRoutes())
 		})
 	})
 

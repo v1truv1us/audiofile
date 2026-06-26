@@ -53,6 +53,7 @@ func TestCreateInsertsWishlistItem(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "wishlist")
 	mock.ExpectQuery("INSERT INTO public.releases").
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("release-1"))
@@ -81,6 +82,7 @@ func TestCreateManualWishlistItemWithoutRelease(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "wishlist")
 	mock.ExpectQuery("INSERT INTO public.wishlist_items").
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("wish-1"))
@@ -544,6 +546,7 @@ func TestCreateShareReturnsViewerID(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "share")
 	mock.ExpectQuery("SELECT id::text").
 		WithArgs("miles").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
@@ -575,6 +578,7 @@ func TestCreateShareReturnsNotFoundForUnknownUser(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "share")
 	mock.ExpectQuery("SELECT id::text").
 		WithArgs("missing").
 		WillReturnError(pgx.ErrNoRows)
@@ -597,6 +601,7 @@ func TestCreateShareRejectsSelfShare(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "share")
 	mock.ExpectQuery("SELECT id::text").
 		WithArgs("owner").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("owner-1"))
@@ -619,6 +624,7 @@ func TestCreateShareReturnsDuplicateConflict(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "share")
 	mock.ExpectQuery("SELECT id::text").
 		WithArgs("miles").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
@@ -841,6 +847,7 @@ func TestCreateShareReturnsServerErrorOnProfileLookupFailure(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "share")
 	mock.ExpectQuery("SELECT id::text").
 		WithArgs("miles").
 		WillReturnError(assertErr("db down"))
@@ -866,6 +873,7 @@ func TestCreateShareReturnsServerErrorOnInsertFailure(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "share")
 	mock.ExpectQuery("SELECT id::text").
 		WithArgs("miles").
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
@@ -1046,5 +1054,92 @@ func TestOptionalStringTrimsBlankStrings(t *testing.T) {
 	got := optionalString(" Blue Note ")
 	if got == nil || *got != "Blue Note" {
 		t.Fatalf("expected trimmed string, got %#v", got)
+	}
+}
+
+// expectGuardPass mocks the billing GuardLimit queries for a free-tier user under the limit.
+func expectGuardPass(mock pgxmock.PgxPoolIface, action string) {
+	// FetchStatus query
+	mock.ExpectQuery("SELECT.*FROM public.profiles p.*LEFT JOIN public.subscriptions s").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("free", "inactive", nil, false, false))
+
+	// Count query based on action
+	switch action {
+	case "collection":
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.collection_items").
+			WithArgs(pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
+	case "wishlist":
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.wishlist_items").
+			WithArgs(pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
+	case "share":
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.wishlist_shares").
+			WithArgs(pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
+	}
+}
+
+func TestCreateReturnsForbiddenWhenWishlistLimitExceeded(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	// FetchStatus returns free tier
+	mock.ExpectQuery("SELECT.*FROM public.profiles p.*LEFT JOIN public.subscriptions s").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("free", "inactive", nil, false, false))
+	// Count returns at limit
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.wishlist_items").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(25))
+
+	h := NewHandler(mock)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"userId":"user-1","title":"Kind of Blue","artist":"Miles Davis"}`))
+	res := httptest.NewRecorder()
+
+	h.create(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusForbidden, res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "wishlist limit") {
+		t.Fatalf("expected wishlist limit error, got %q", res.Body.String())
+	}
+}
+
+func TestCreateShareReturnsForbiddenWhenShareLimitExceeded(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	// FetchStatus returns free tier
+	mock.ExpectQuery("SELECT.*FROM public.profiles p.*LEFT JOIN public.subscriptions s").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("free", "inactive", nil, false, false))
+	// Count returns at limit
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.wishlist_shares").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(1))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"miles"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusForbidden, res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "sharing limit") {
+		t.Fatalf("expected sharing limit error, got %q", res.Body.String())
 	}
 }

@@ -21,9 +21,10 @@ const authPendingClass = authRequired ? 'auth-pending' : '';
     </style>
     <script is:inline>
       // Production: API is same origin at /api/* (Go serves both).
-      // Dev: API runs on port 8080, frontend on 4321.
+      // Dev HTTPS (Vite proxy): API proxied from /api to backend:8080.
+      // Dev HTTP fallback: API runs on port 8080, frontend on 4321.
       window.__API_BASE__ = window.__API_BASE__ ||
-        (location.port ? location.protocol + '//' + location.hostname + ':8080' : '');
+        (location.protocol === 'https:' ? '' : (location.port ? location.protocol + '//' + location.hostname + ':8080' : ''));
     </script>
   </head>
   <body class:list={["bg-cream text-espresso min-h-screen flex flex-col", authPendingClass]}>

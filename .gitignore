@@ -43,3 +43,10 @@ specs/
 # Local agent/tooling state (not source)
 .crew/
 .pi/
+/.crew/
+/.crew
+!.crew/artifacts/
+!.crew/graphs/
+!.crew/artifacts/.gitkeep
+!.crew/graphs/.gitkeep.env.local
+backend/.env.bak

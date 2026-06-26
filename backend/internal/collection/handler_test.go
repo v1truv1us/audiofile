@@ -71,6 +71,7 @@ func TestCreateInsertsReleaseAndCollectionItem(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "collection")
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO public.releases").
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -104,6 +105,7 @@ func TestCreateReturnsReleaseInsertErrors(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "collection")
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO public.releases").
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -256,6 +258,7 @@ func TestCreateReturnsCollectionInsertErrors(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "collection")
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO public.releases").
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -283,6 +286,7 @@ func TestCreateReturnsCommitErrors(t *testing.T) {
 	}
 	defer mock.Close()
 
+	expectGuardPass(mock, "collection")
 	mock.ExpectBegin()
 	mock.ExpectQuery("INSERT INTO public.releases").
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
@@ -917,5 +921,61 @@ func TestDerefStr(t *testing.T) {
 	value := "VG+"
 	if derefStr(&value) != value {
 		t.Fatalf("expected %q", value)
+	}
+}
+
+// expectGuardPass mocks the billing GuardLimit queries for a free-tier user under the limit.
+func expectGuardPass(mock pgxmock.PgxPoolIface, action string) {
+	// FetchStatus query
+	mock.ExpectQuery("SELECT.*FROM public.profiles p.*LEFT JOIN public.subscriptions s").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("free", "inactive", nil, false, false))
+
+	// Count query based on action
+	switch action {
+	case "collection":
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.collection_items").
+			WithArgs(pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
+	case "wishlist":
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.wishlist_items").
+			WithArgs(pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
+	case "share":
+		mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.wishlist_shares").
+			WithArgs(pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(0))
+	}
+}
+
+func TestCreateReturnsForbiddenWhenCollectionLimitExceeded(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	// FetchStatus returns free tier
+	mock.ExpectQuery("SELECT.*FROM public.profiles p.*LEFT JOIN public.subscriptions s").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"tier", "status", "current_period_end", "is_vip", "is_admin"}).
+			AddRow("free", "inactive", nil, false, false))
+	// Count returns at limit
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM public.collection_items").
+		WithArgs(pgxmock.AnyArg()).
+		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(50))
+
+	h := NewHandler(mock)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"userId":"user-1","title":"Kind of Blue","artist":"Miles Davis"}`))
+	res := httptest.NewRecorder()
+
+	h.create(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusForbidden, res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "collection limit") {
+		t.Fatalf("expected collection limit error, got %q", res.Body.String())
 	}
 }

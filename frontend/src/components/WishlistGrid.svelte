@@ -1,6 +1,7 @@
 <script lang="ts">
 	import WishlistRow from './WishlistRow.svelte';
 	import ShareDialog from './ShareDialog.svelte';
+	import PaywallModal from './PaywallModal.svelte';
 	import { apiFetch } from '../lib/api';
 	import { type ReleaseSearchResult } from '../lib/barcode';
 
@@ -22,6 +23,8 @@
 	let error = $state('');
 	let showShareDialog = $state(false);
 	let isSharedView = $state(false);
+	let showPaywall = $state(false);
+	let paywallAction = $state<'wishlist' | 'share'>('wishlist');
 
 	let form = $state({
 		title: '',
@@ -113,6 +116,15 @@
 					coverUrl: form.coverUrl,
 				}),
 			});
+			if (res.status === 403 && !editingId) {
+				const text = await res.text();
+				if (text.includes('wishlist limit') || text.includes('limit')) {
+					paywallAction = 'wishlist';
+					showPaywall = true;
+					return;
+				}
+				throw new Error(text);
+			}
 			if (!res.ok) throw new Error(await res.text());
 			resetForm();
 			showAddForm = false;
@@ -190,8 +202,10 @@
 	</div>
 	{#if error && !showAddForm && !showShareDialog}<p class="text-xs text-red-700">{error}</p>{/if}
 
+	<PaywallModal isOpen={showPaywall} actionType={paywallAction} onClose={() => showPaywall = false} />
+
 	{#if showShareDialog}
-		<ShareDialog onclose={() => showShareDialog = false} />
+		<ShareDialog onclose={() => showShareDialog = false} onPaywall={() => { paywallAction = 'share'; showPaywall = true; }} />
 	{/if}
 
 	{#if showAddForm}

@@ -25,6 +25,7 @@
     "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0"
+    "@playwright/test": "^1.60.0",
+    "@vitejs/plugin-basic-ssl": "^2.3.0"
   }
 }

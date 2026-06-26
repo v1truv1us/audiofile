@@ -4,9 +4,10 @@
 
 	type Props = {
 		onclose?: () => void;
+		onPaywall?: () => void;
 	};
 
-	let { onclose }: Props = $props();
+	let { onclose, onPaywall }: Props = $props();
 
 	type SearchResult = { id: string; username: string; displayName: string };
 	type OutgoingShare = {
@@ -86,6 +87,14 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ username: result.username }),
 			});
+			if (res.status === 403) {
+				const text = await res.text();
+				if (text.includes('share') || text.includes('limit')) {
+					onPaywall?.();
+					return;
+				}
+				throw new Error(text);
+			}
 			if (res.status === 201) {
 				shareStatus = `Shared with ${result.username}`;
 				searchQuery = '';
