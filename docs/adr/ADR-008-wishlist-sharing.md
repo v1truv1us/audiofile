@@ -29,7 +29,7 @@ Introduce identity-based, in-app wishlist sharing alongside (not replacing) publ
 - The `profiles` table now carries live data; a new migration backfills no rows (trigger only applies to new signups) — existing dev accounts without profiles must be handled manually in dev (`supabase db reset`).
 - `username` uniqueness is enforced at the DB; collisions during signup are resolved by the trigger with a numeric suffix.
 - Sharing is whole-list only. Per-item or named-list sharing will require a schema change to introduce a `wishlist_groups`/lists entity — explicitly deferred.
-- No notifications on share arrival in this iteration; recipients discover shares when they open "Shared with me."
+- ~~No notifications on share arrival in this iteration; recipients discover shares when they open "Shared with me."~~ Superseded by ADR-010: share arrival now creates an in-app notification (bell + inbox) and a best-effort email, and public links can be claimed into "Shared with me."
 
 ## Alternatives considered
 - **Full friends system (requests, accept/decline, friends list).** Rejected for now — higher UI and model cost; share-by-username gives 90% of the value at a fraction of the scope. Can be layered on later without schema changes to `wishlist_shares`.

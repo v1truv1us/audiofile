@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/getsentry/sentry-go"
 
 	"github.com/v1truv1us/audiofile/backend/internal/auth"
 	"github.com/v1truv1us/audiofile/backend/internal/billing"
@@ -35,8 +38,18 @@ type dbPool interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+type ShareNotifier interface {
+	NotifyWishlistShared(ctx context.Context, recipientID, actorID, message string) error
+	NotifyWishlistClaimed(ctx context.Context, ownerID, actorID string) error
+}
+
 type Handler struct {
-	pool dbPool
+	pool     dbPool
+	notifier ShareNotifier
+}
+
+func (h *Handler) SetNotifier(n ShareNotifier) {
+	h.notifier = n
 }
 
 type CreateWishlistItemRequest struct {
@@ -96,6 +109,7 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/", h.list)
 	r.Post("/", h.create)
 	r.Post("/shares", h.createShare)
+	r.Post("/shares/claim", h.claimShare)
 	r.Get("/shares", h.listShares)
 	r.Delete("/shares/{viewerID}", h.deleteShare)
 	r.Get("/shared-with-me", h.sharedWithMe)
@@ -383,9 +397,77 @@ func (h *Handler) createShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.notifier != nil {
+		if err := h.notifier.NotifyWishlistShared(r.Context(), viewerID, callerID, req.Message); err != nil {
+			log.Printf("wishlist: failed to send share notification: %v", err)
+			sentry.CaptureException(err)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"viewerId": viewerID})
+}
+
+type ClaimShareRequest struct {
+	OwnerID string `json:"ownerId"`
+}
+
+func (h *Handler) claimShare(w http.ResponseWriter, r *http.Request) {
+	var req ClaimShareRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	req.OwnerID = strings.TrimSpace(req.OwnerID)
+	if req.OwnerID == "" {
+		http.Error(w, "ownerId is required", http.StatusBadRequest)
+		return
+	}
+
+	callerID := auth.UserID(r.Context())
+	if req.OwnerID == callerID {
+		http.Error(w, "cannot add your own wishlist", http.StatusBadRequest)
+		return
+	}
+
+	var ownerID string
+	if err := h.pool.QueryRow(r.Context(), `
+		SELECT id::text
+		FROM public.profiles
+		WHERE id = $1`, req.OwnerID).Scan(&ownerID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := h.pool.Exec(r.Context(), `
+		INSERT INTO public.wishlist_shares (owner_id, viewer_id)
+		VALUES ($1, $2)`, ownerID, callerID); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"status": "already_added"})
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if h.notifier != nil {
+		if err := h.notifier.NotifyWishlistClaimed(r.Context(), ownerID, callerID); err != nil {
+			log.Printf("wishlist: failed to send claim notification: %v", err)
+			sentry.CaptureException(err)
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "added"})
 }
 
 func (h *Handler) listShares(w http.ResponseWriter, r *http.Request) {

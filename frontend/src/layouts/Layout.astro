@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import NotificationBell from '../components/NotificationBell.svelte';
 
 interface Props { title: string; authRequired?: boolean; }
 const { title, authRequired = true } = Astro.props;
@@ -63,6 +64,7 @@ const authPendingClass = authRequired ? 'auth-pending' : '';
         <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Wishlist</a>
         <a href="/shared" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Shared</a>
         <a href="/account" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 transition-opacity">Account</a>
+        <NotificationBell client:load />
         <a href="/login" id="nav-signin" class="text-xs tracking-[0.08em] uppercase bg-gold text-espresso font-medium px-4 py-1.5 rounded hover:bg-gold-mid transition-colors">Sign in</a>
       </div>
 
@@ -73,6 +75,7 @@ const authPendingClass = authRequired ? 'auth-pending' : '';
           <a href="/wishlist" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Wishlist</a>
           <a href="/shared" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Shared</a>
           <a href="/account" class="text-gold text-xs tracking-[0.1em] uppercase opacity-70 hover:opacity-100 py-2">Account</a>
+          <NotificationBell client:load />
           <a href="/login" id="mobile-signin" class="text-gold text-xs tracking-[0.08em] uppercase py-2">Sign in</a>
         </div>
       </div>

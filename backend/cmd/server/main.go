@@ -21,6 +21,7 @@ import (
 	"github.com/v1truv1us/audiofile/backend/internal/auth"
 	"github.com/v1truv1us/audiofile/backend/internal/billing"
 	"github.com/v1truv1us/audiofile/backend/internal/collection"
+	"github.com/v1truv1us/audiofile/backend/internal/notifications"
 	"github.com/v1truv1us/audiofile/backend/internal/profiles"
 	"github.com/v1truv1us/audiofile/backend/internal/releases"
 	"github.com/v1truv1us/audiofile/backend/internal/wishlist"
@@ -102,7 +103,9 @@ func main() {
 			return h.Routes()
 		}())
 		r.Mount("/public/collection", collection.NewHandler(pool).PublicRoutes())
-		r.Mount("/public/wishlist", wishlist.NewHandler(pool).PublicRoutes())
+		wishlistHandler := wishlist.NewHandler(pool)
+		wishlistHandler.SetNotifier(buildNotifier(pool, supabaseURL))
+		r.Mount("/public/wishlist", wishlistHandler.PublicRoutes())
 
 		// Billing webhook (outside auth — uses Paddle signature verification)
 		var paddleClient billing.PaddleClient
@@ -139,7 +142,8 @@ func main() {
 			r.Use(auth.Middleware(supabaseURL))
 			r.Mount("/collection", collection.NewHandler(pool).Routes())
 			r.Mount("/profiles", profiles.NewHandler(pool).Routes())
-			r.Mount("/wishlist", wishlist.NewHandler(pool).Routes())
+			r.Mount("/wishlist", wishlistHandler.Routes())
+			r.Mount("/notifications", notifications.NewHandler(pool).Routes())
 			r.Mount("/billing", billingHandler.Routes())
 			r.Mount("/admin/billing", billingHandler.AdminRoutes())
 		})
@@ -178,6 +182,29 @@ func main() {
 	if err := http.ListenAndServe(host+":"+port, r); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func buildNotifier(pool *pgxpool.Pool, supabaseURL string) *notifications.Notifier {
+	var sender notifications.EmailSender = notifications.NoOpSender{}
+	if apiKey := os.Getenv("RESEND_API_KEY"); apiKey != "" {
+		from := os.Getenv("RESEND_FROM_EMAIL")
+		if from == "" {
+			from = "AudioFile <notifications@audiofile.app>"
+		}
+		sender = notifications.NewResendSender(apiKey, from)
+		log.Println("Resend email sender initialized")
+	} else {
+		log.Println("RESEND_API_KEY not set; share notification emails disabled")
+	}
+
+	var lookup notifications.EmailLookup = notifications.NoOpLookup{}
+	if serviceRoleKey := os.Getenv("SUPABASE_SERVICE_ROLE_KEY"); serviceRoleKey != "" {
+		lookup = notifications.NewSupabaseAdminLookup(supabaseURL, serviceRoleKey)
+	} else {
+		log.Println("SUPABASE_SERVICE_ROLE_KEY not set; share notification emails disabled")
+	}
+
+	return notifications.NewNotifier(pool, sender, lookup)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

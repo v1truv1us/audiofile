@@ -63,4 +63,11 @@ test.describe('Wishlist page', () => {
 		await expect(page).not.toHaveURL(/\/login/);
 		await expectSharedWishlistView(page);
 	});
+
+	test('hides the claim button from logged-out visitors', async ({ page }) => {
+		await mockSharedWishlist(page);
+		await page.goto('/wishlist?share=shared-user-1');
+		await expect(page.locator('text=Kind of Blue')).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Add to my shared wishlists' })).toBeHidden();
+	});
 });

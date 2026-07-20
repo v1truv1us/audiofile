@@ -23,6 +23,10 @@
 	let error = $state('');
 	let showShareDialog = $state(false);
 	let isSharedView = $state(false);
+	let shareOwnerId = $state('');
+	let canClaim = $state(false);
+	let claimState = $state<'idle' | 'adding' | 'added' | 'error'>('idle');
+	let claimError = $state('');
 	let showPaywall = $state(false);
 	let paywallAction = $state<'wishlist' | 'share'>('wishlist');
 	let shareDialog: { refreshShares: () => Promise<void> } | undefined = $state(undefined);
@@ -170,6 +174,12 @@
 		try {
 			const shareID = new URLSearchParams(window.location.search).get('share');
 			isSharedView = Boolean(shareID);
+			if (shareID) {
+				shareOwnerId = shareID;
+				const { supabase } = await import('../lib/supabase');
+				const { data: { session } } = await supabase.auth.getSession();
+				canClaim = Boolean(session);
+			}
 			const res = shareID
 				? await apiFetch(`/api/public/wishlist/${encodeURIComponent(shareID)}`, { public: true })
 				: await apiFetch('/api/wishlist');
@@ -180,6 +190,23 @@
 			console.error('Failed to fetch wishlist', e);
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function claimShare() {
+		claimState = 'adding';
+		claimError = '';
+		try {
+			const res = await apiFetch('/api/wishlist/shares/claim', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ ownerId: shareOwnerId }),
+			});
+			if (!res.ok) throw new Error(await res.text());
+			claimState = 'added';
+		} catch (e) {
+			claimError = e instanceof Error ? e.message : 'Failed to add shared wishlist';
+			claimState = 'error';
 		}
 	}
 
@@ -198,6 +225,15 @@
 			<div class="flex gap-2">
 				<button type="button" class="border border-espresso/30 text-espresso text-xs tracking-[0.1em] uppercase px-4 py-2 rounded" on:click={() => showShareDialog = !showShareDialog}>Share</button>
 				<button type="button" class="bg-espresso text-gold text-xs tracking-[0.1em] uppercase px-4 py-2 rounded" on:click={() => { resetForm(); showAddForm = !showAddForm; }}>+ Add to Wishlist</button>
+			</div>
+		{:else if canClaim}
+			<div class="flex flex-col items-end gap-1">
+				{#if claimState === 'added'}
+					<span class="text-xs text-gold-dark">Added — <a href="/shared" class="underline">see Shared with me</a></span>
+				{:else}
+					<button type="button" disabled={claimState === 'adding'} class="bg-espresso text-gold text-xs tracking-[0.1em] uppercase px-4 py-2 rounded disabled:opacity-60" on:click={claimShare}>{claimState === 'adding' ? 'Adding...' : 'Add to my shared wishlists'}</button>
+					{#if claimState === 'error'}<span class="text-xs text-red-700">{claimError}</span>{/if}
+				{/if}
 			</div>
 		{/if}
 	</div>

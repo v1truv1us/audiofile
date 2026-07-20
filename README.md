@@ -56,6 +56,10 @@ npm run test:e2e
 
 See [docs/adr/](docs/adr/) for all architecture decisions.
 
+### Notifications & sharing
+
+Sharing a wishlist to a user creates an in-app notification (bell in the nav, inbox at `/notifications`) and sends a best-effort email via [Resend](https://resend.com). Logged-in users viewing a public share link (`/wishlist?share=...`) can add it to their "Shared with me" inbox with one click. Optional env vars: `SUPABASE_SERVICE_ROLE_KEY` (server-only, for recipient email lookup), `RESEND_API_KEY`, `RESEND_FROM_EMAIL`. See ADR-010.
+
 ## Project structure
 
 ```

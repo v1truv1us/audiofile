@@ -1143,3 +1143,329 @@ func TestCreateShareReturnsForbiddenWhenShareLimitExceeded(t *testing.T) {
 		t.Fatalf("expected sharing limit error, got %q", res.Body.String())
 	}
 }
+
+type stubShareNotifier struct {
+	sharedCalls  []sharedCall
+	claimedCalls []claimedCall
+	sharedErr    error
+	claimedErr   error
+}
+
+type sharedCall struct {
+	recipientID string
+	actorID     string
+	message     string
+}
+
+type claimedCall struct {
+	ownerID string
+	actorID string
+}
+
+func (s *stubShareNotifier) NotifyWishlistShared(ctx context.Context, recipientID, actorID, message string) error {
+	s.sharedCalls = append(s.sharedCalls, sharedCall{recipientID, actorID, message})
+	return s.sharedErr
+}
+
+func (s *stubShareNotifier) NotifyWishlistClaimed(ctx context.Context, ownerID, actorID string) error {
+	s.claimedCalls = append(s.claimedCalls, claimedCall{ownerID, actorID})
+	return s.claimedErr
+}
+
+func TestCreateShareNotifiesRecipient(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	expectGuardPass(mock, "share")
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("miles").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1", "hi").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	notifier := &stubShareNotifier{}
+	h := NewHandler(mock)
+	h.SetNotifier(notifier)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"miles","message":"hi"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusCreated, res.Code, res.Body.String())
+	}
+	if len(notifier.sharedCalls) != 1 {
+		t.Fatalf("expected 1 share notification, got %d", len(notifier.sharedCalls))
+	}
+	call := notifier.sharedCalls[0]
+	if call.recipientID != "viewer-1" || call.actorID != "owner-1" || call.message != "hi" {
+		t.Fatalf("unexpected notification args %+v", call)
+	}
+}
+
+func TestCreateShareSucceedsWhenNotifierFails(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	expectGuardPass(mock, "share")
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("miles").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("viewer-1"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-1", "viewer-1", "").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	notifier := &stubShareNotifier{sharedErr: errors.New("notify failed")}
+	h := NewHandler(mock)
+	h.SetNotifier(notifier)
+	req := wishlistRequest(http.MethodPost, "/shares", strings.NewReader(`{"username":"miles"}`))
+	res := httptest.NewRecorder()
+
+	h.createShare(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d despite notifier failure, got %d", http.StatusCreated, res.Code)
+	}
+}
+
+func TestClaimShareAddsSharedWishlist(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("owner-2").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("owner-2"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-2", "owner-1").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	notifier := &stubShareNotifier{}
+	h := NewHandler(mock)
+	h.SetNotifier(notifier)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"owner-2"}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusCreated, res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"status":"added"`) {
+		t.Fatalf("expected added status, got %q", res.Body.String())
+	}
+	if len(notifier.claimedCalls) != 1 {
+		t.Fatalf("expected 1 claim notification, got %d", len(notifier.claimedCalls))
+	}
+	if notifier.claimedCalls[0].ownerID != "owner-2" || notifier.claimedCalls[0].actorID != "owner-1" {
+		t.Fatalf("unexpected claim notification args %+v", notifier.claimedCalls[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaimShareReturnsAlreadyAddedOnDuplicate(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("owner-2").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("owner-2"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-2", "owner-1").
+		WillReturnError(&pgconn.PgError{Code: "23505"})
+
+	notifier := &stubShareNotifier{}
+	h := NewHandler(mock)
+	h.SetNotifier(notifier)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"owner-2"}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+	}
+	if !strings.Contains(res.Body.String(), `"status":"already_added"`) {
+		t.Fatalf("expected already_added status, got %q", res.Body.String())
+	}
+	if len(notifier.claimedCalls) != 0 {
+		t.Fatalf("expected no claim notification on duplicate, got %d", len(notifier.claimedCalls))
+	}
+}
+
+func TestClaimShareRejectsSelfClaim(t *testing.T) {
+	h := NewHandler(nil)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"owner-1"}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "cannot add your own wishlist") {
+		t.Fatalf("expected self-claim message, got %q", res.Body.String())
+	}
+}
+
+func TestClaimShareRejectsInvalidJSON(t *testing.T) {
+	h := NewHandler(nil)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader("{"))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+}
+
+func TestClaimShareRequiresOwnerID(t *testing.T) {
+	h := NewHandler(nil)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "ownerId is required") {
+		t.Fatalf("expected ownerId message, got %q", res.Body.String())
+	}
+}
+
+func TestClaimShareReturnsNotFoundForUnknownOwner(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("missing").
+		WillReturnError(pgx.ErrNoRows)
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"missing"}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
+	}
+}
+
+func TestClaimShareReturnsServerErrorOnOwnerLookupFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("owner-2").
+		WillReturnError(errors.New("db down"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"owner-2"}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestClaimShareReturnsServerErrorOnInsertFailure(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("owner-2").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("owner-2"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-2", "owner-1").
+		WillReturnError(errors.New("db down"))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"owner-2"}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, res.Code)
+	}
+}
+
+func TestClaimShareSucceedsWhenNotifierFails(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("owner-2").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("owner-2"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-2", "owner-1").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	notifier := &stubShareNotifier{claimedErr: errors.New("notify failed")}
+	h := NewHandler(mock)
+	h.SetNotifier(notifier)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"owner-2"}`))
+	res := httptest.NewRecorder()
+
+	h.claimShare(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d despite notifier failure, got %d", http.StatusCreated, res.Code)
+	}
+}
+
+func TestClaimShareRouteIsRegistered(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+
+	mock.ExpectQuery("SELECT id::text").
+		WithArgs("owner-2").
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("owner-2"))
+	mock.ExpectExec("INSERT INTO public.wishlist_shares").
+		WithArgs("owner-2", "owner-1").
+		WillReturnResult(pgxmock.NewResult("INSERT", 1))
+
+	h := NewHandler(mock)
+	req := wishlistRequest(http.MethodPost, "/shares/claim", strings.NewReader(`{"ownerId":"owner-2"}`))
+	res := httptest.NewRecorder()
+
+	h.Routes().ServeHTTP(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected status %d via mounted router, got %d with body %q", http.StatusCreated, res.Code, res.Body.String())
+	}
+}
