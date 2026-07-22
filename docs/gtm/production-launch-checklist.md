@@ -18,24 +18,17 @@ Everything below is verified against production as of 2026-07-20. Code is merged
 - [ ] **Webhook destination**: Developer Tools → Notifications → URL `https://audiofile.app/api/billing/webhook`, events: `transaction.completed`, `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.paused`. Confirm the secret matches `PADDLE_WEBHOOK_SECRET` in Coolify.
 - [ ] Decide sandbox vs production: prod currently runs `PADDLE_ENVIRONMENT=sandbox`. Going live means switching all Paddle vars to `pdl_live_*` / `live_*` values and repeating domain approval in the production Paddle account.
 
-## Blocking — Coolify env vars (owner action required)
+## Blocking — Coolify env vars
 
-Set on the `audiofile` app in Coolify (values for the Paddle ones are in local `backend/.env`):
+Set via Coolify API on 2026-07-21 (all six Paddle vars + `APP_BASE_URL`):
 
-| Var | Status | Purpose |
-|---|---|---|
-| `PADDLE_CLIENT_TOKEN` | missing in prod | Paddle.js overlay init (frontend checkout) |
-| `PADDLE_PREMIUM_MONTHLY_PRICE_ID` | missing in prod | Price the overlay opens |
-| `PADDLE_API_KEY` | set | Server-side Paddle API |
-| `PADDLE_WEBHOOK_SECRET` | set | Webhook signature verification |
-| `PADDLE_ENVIRONMENT` | set (`sandbox`) | API base URL selection |
-| `SUPABASE_SERVICE_ROLE_KEY` | missing | Recipient email lookup for share emails (server-only) |
-| `RESEND_API_KEY` | missing | Share notification emails (optional but recommended) |
-| `RESEND_FROM_EMAIL` | missing | e.g. `AudioFile <notifications@audiofile.app>` (verify domain in Resend first) |
+- [x] `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_ENVIRONMENT` (sandbox), `PADDLE_CLIENT_TOKEN`, `PADDLE_PREMIUM_MONTHLY_PRICE_ID`, `APP_BASE_URL` — verified live: `/api/billing/config` returns the real client token + price ID
+- [ ] `SUPABASE_SERVICE_ROLE_KEY` — recipient email lookup for share emails (server-only)
+- [ ] `RESEND_API_KEY`, `RESEND_FROM_EMAIL` — share notification emails (optional but recommended)
 
 ## Blocking — Deploy
 
-- [ ] GitHub Actions runs for `main` were stuck `queued` (2026-07-20) — check runner health, then confirm `Test` and `Deploy to Coolify` go green.
+- [x] GitHub Actions `Test` + `Deploy to Coolify` green on `main` (2026-07-21, after frontend build fix); app restarted via Coolify API to pick up the new env vars
 
 ## Post-deploy smoke (in order)
 
