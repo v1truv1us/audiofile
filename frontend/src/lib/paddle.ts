@@ -6,7 +6,7 @@ declare global {
 
 let scriptPromise: Promise<void> | null = null;
 
-export async function fetchBillingConfig(): Promise<{ premiumMonthlyPriceId: string; environment: string; clientToken: string }> {
+export async function fetchBillingConfig(): Promise<{ premiumMonthlyPriceId: string; environment: string; clientToken: string; billingEnabled: boolean }> {
 	const res = await apiFetch('/api/billing/config');
 	return res.json();
 }
@@ -25,17 +25,22 @@ export function loadPaddleScript(): Promise<void> {
 	return scriptPromise;
 }
 
-export async function initPaddle(clientToken: string, environment: string): Promise<void> {
+export async function initPaddle(clientToken: string, environment: string, customerEmail?: string): Promise<void> {
 	await loadPaddleScript();
 	if (environment !== 'production' && window.Paddle.Environment) {
 		window.Paddle.Environment.set('sandbox');
 	}
-	window.Paddle.Initialize({
+	const initOptions: any = {
 		token: clientToken,
 		eventCallback: (event: any) => {
 			console.log('[PADDLE DEBUG] Global event:', event);
 		}
-	});
+	};
+	if (customerEmail) {
+		// Paddle Retain: identify the signed-in customer (email or Paddle customer ID).
+		initOptions.pwCustomer = { email: customerEmail };
+	}
+	window.Paddle.Initialize(initOptions);
 }
 
 export function openPaddleCheckout(options: { priceId: string; userId: string; successUrl: string; onComplete?: () => void }): void {

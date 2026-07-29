@@ -35,13 +35,15 @@ type Handler struct {
 	pool        handlerPool
 	paddle      PaddleClient
 	validateSig SignatureValidator
+	allowList   IPAllowLister
 }
 
 // NewHandler creates a new billing Handler.
 func NewHandler(pool handlerPool, paddle PaddleClient) *Handler {
 	return &Handler{
-		pool:   pool,
-		paddle: paddle,
+		pool:      pool,
+		paddle:    paddle,
+		allowList: defaultPaddleIPAllowLister,
 		validateSig: func(payload []byte, header string) error {
 			if header == "" {
 				return errors.New("missing paddle-signature header")
@@ -84,6 +86,11 @@ func (h *Handler) SetSignatureValidator(v SignatureValidator) {
 	h.validateSig = v
 }
 
+// SetIPAllowLister replaces the default webhook source-IP allowlister (used in tests).
+func (h *Handler) SetIPAllowLister(fn IPAllowLister) {
+	h.allowList = fn
+}
+
 // Routes returns the authenticated billing routes.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
@@ -118,10 +125,11 @@ func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
 	// Client-side token is safe to expose to the browser — used by Paddle.js
 	clientToken := os.Getenv("PADDLE_CLIENT_TOKEN")
 
-	writeJSON(w, http.StatusOK, map[string]string{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"premiumMonthlyPriceId": priceID,
 		"environment":           environment,
 		"clientToken":           clientToken,
+		"billingEnabled":        billingEnabled(),
 	})
 }
 
@@ -163,6 +171,10 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
+	if !billingEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "billing is not available"})
+		return
+	}
 	var req checkoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
@@ -290,8 +302,8 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	collLimit := FreeCollectionLimit
 	wishLimit := FreeWishlistLimit
 	shareLimit := FreeShareLimit
-	if us.IsPremium() {
-		collLimit = -1 // unlimited
+	if !billingEnabled() || us.IsPremium() {
+		collLimit = -1 // unlimited (billing disabled or premium)
 		wishLimit = -1
 		shareLimit = -1
 	}
@@ -371,6 +383,13 @@ type paddleSubscriptionData struct {
 }
 
 func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
+	if h.allowList != nil {
+		if err := h.allowList(r); err != nil {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+			return
+		}
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to read body"})

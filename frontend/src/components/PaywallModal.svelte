@@ -44,7 +44,8 @@
 		try {
 			config = await fetchBillingConfig();
 			if (config?.clientToken) {
-				await initPaddle(config.clientToken, config.environment);
+				const { data: { session } } = await supabase.auth.getSession();
+				await initPaddle(config.clientToken, config.environment, session?.user?.email);
 			}
 		} catch (err) {
 			console.error('Failed to load billing config', err);

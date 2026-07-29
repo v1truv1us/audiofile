@@ -1449,6 +1449,7 @@ func TestWebhookRejectsUnsignedInProduction(t *testing.T) {
 	defer os.Unsetenv("PADDLE_ENVIRONMENT")
 
 	h := NewHandler(nil, nil)
+	h.SetIPAllowLister(func(*http.Request) error { return nil }) // isolate signature validation
 	payload := `{"event_id":"evt_1","event_type":"subscription.created","data":{"id":"sub_1","customer_id":"ctm_1","status":"active","custom_data":{"user_id":"user-1"},"items":[{"price":{"id":"pri_1"}}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
 	req.Header.Set("paddle-signature", "ts=123;h1=abc")

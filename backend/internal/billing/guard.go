@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,13 @@ var (
 	ErrWishlistLimitExceeded   = errors.New("free tier wishlist limit (25 items) reached")
 	ErrShareLimitExceeded      = errors.New("free tier wishlist sharing limit (1 share) reached")
 )
+
+// billingEnabled reports whether premium gating and checkout are active.
+// Defaults to true; set BILLING_ENABLED=false to lift free-tier limits and
+// disable checkout (e.g. during a public beta before payment verification).
+func billingEnabled() bool {
+	return os.Getenv("BILLING_ENABLED") != "false"
+}
 
 type dbPool interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -76,6 +84,9 @@ func FetchStatus(ctx context.Context, pool dbPool, userID string) (*UserStatus, 
 // GuardLimit checks whether a user has exceeded their free-tier limit for the given action.
 // Returns nil if the user is premium or under the limit; otherwise returns the appropriate sentinel error.
 func GuardLimit(ctx context.Context, pool dbPool, userID string, action string) error {
+	if !billingEnabled() {
+		return nil // billing disabled: no free-tier limits
+	}
 	status, err := FetchStatus(ctx, pool, userID)
 	if err != nil {
 		return err

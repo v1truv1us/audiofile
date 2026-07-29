@@ -1,0 +1,60 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Privacy Policy" authRequired={false}>
+  <div class="max-w-3xl mx-auto">
+    <h1 class="font-serif text-3xl text-espresso mb-2">Privacy Policy</h1>
+    <p class="text-sm text-espresso/60 mb-8">Last updated: July 24, 2026</p>
+    <div class="space-y-6 text-espresso/90 leading-relaxed">
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">1. Information we collect</h2>
+        <ul class="list-disc pl-6 space-y-1">
+          <li><strong>Account information:</strong> your email address when you sign up.</li>
+          <li><strong>Collection data:</strong> the records, photos, condition notes, wishlists, and shares you create.</li>
+          <li><strong>Usage information:</strong> basic device and usage data that help us keep the Service secure and reliable.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">2. How we use your information</h2>
+        <p>We use your information to operate the Service: to authenticate you, store and display your collection, send transactional and notification emails, process payments, prevent abuse, and improve the product.</p>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">3. Third parties we rely on</h2>
+        <ul class="list-disc pl-6 space-y-1">
+          <li><strong>Paddle</strong> — processes payments and, as Merchant of Record, collects and stores payment details under its own privacy policy. We never receive or store your full card details.</li>
+          <li><strong>Supabase</strong> — hosts our database and handles authentication.</li>
+          <li><strong>Resend</strong> — delivers transactional emails (such as share notifications).</li>
+          <li><strong>Sentry</strong> — receives error reports to help us fix bugs.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">4. Payments</h2>
+        <p>Premium subscriptions are sold by Paddle. Payment information is handled by Paddle under its privacy policy; AudioFile only receives confirmation of your subscription status.</p>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">5. Cookies and local storage</h2>
+        <p>We use essential cookies and browser storage to keep you signed in and make the Service work. We don't sell your data or use it for cross-site advertising.</p>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">6. Data retention</h2>
+        <p>We keep your data for as long as your account is active. You can request deletion of your account and associated data at any time.</p>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">7. Your rights</h2>
+        <p>Depending on where you live (for example, under the GDPR or CCPA), you may have rights to access, correct, or delete your personal data, or to object to certain processing. To exercise any of these, email <a href="mailto:support@audiofile.app" class="underline">support@audiofile.app</a>.</p>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">8. Security</h2>
+        <p>We use reasonable technical and organisational measures to protect your data, including row-level security on our database and restricted access to production systems. No method of transmission or storage is completely secure.</p>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">9. Children</h2>
+        <p>The Service is not directed to children under 13, and we don't knowingly collect their personal information.</p>
+      </section>
+      <section>
+        <h2 class="font-serif text-xl text-espresso mb-2">10. Changes &amp; contact</h2>
+        <p>We may update this policy from time to time. Privacy questions? Email <a href="mailto:support@audiofile.app" class="underline">support@audiofile.app</a>.</p>
+      </section>
+    </div>
+  </div>
+</Layout>

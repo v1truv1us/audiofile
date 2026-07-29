@@ -23,7 +23,8 @@
 		try {
 			config = await fetchBillingConfig();
 			if (config?.clientToken) {
-				await initPaddle(config.clientToken, config.environment);
+				const { data: { session } } = await supabase.auth.getSession();
+				await initPaddle(config.clientToken, config.environment, session?.user?.email);
 			}
 		} catch (err) {
 			console.error('Failed to load billing config', err);
@@ -83,7 +84,7 @@
 </script>
 
 <div class="border border-gold-muted/30 bg-white p-6 rounded-lg max-w-lg">
-	{#if config?.environment === 'sandbox'}
+	{#if config?.environment === 'sandbox' && config?.billingEnabled !== false}
 		<div class="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
 			⚠️ Sandbox Mode - Test transactions only
 		</div>
@@ -146,8 +147,12 @@
 				</div>
 			</div>
 
-			<div class="pt-4 flex gap-4">
-				{#if status.tier === 'free' && !status.isVip}
+		<div class="pt-4 flex gap-4">
+			{#if config?.billingEnabled === false}
+				<div class="w-full text-center text-xs text-gold-dark bg-gold-muted/10 rounded py-3 px-4">
+					Premium is coming soon — all accounts have full access in the meantime.
+				</div>
+			{:else if status.tier === 'free' && !status.isVip}
 					<button
 						disabled={processing}
 						onclick={handleCheckout}

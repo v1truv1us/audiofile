@@ -1,0 +1,41 @@
+---
+import Layout from '../layouts/Layout.astro';
+---
+<Layout title="Pricing" authRequired={false}>
+  <div class="max-w-3xl mx-auto">
+    <h1 class="font-serif text-3xl text-espresso mb-2">Pricing</h1>
+    <p class="text-sm text-espresso/60 mb-8">Simple, honest pricing. Start free; upgrade when you outgrow it.</p>
+
+    <div class="grid sm:grid-cols-2 gap-6 mb-8">
+      <div class="border border-espresso/15 rounded-lg p-6 bg-white/50">
+        <h2 class="font-serif text-xl text-espresso mb-1">Free</h2>
+        <p class="text-espresso/60 text-sm mb-4">For personal collections.</p>
+        <p class="font-serif text-3xl text-espresso mb-4">$0</p>
+        <ul class="space-y-2 text-sm text-espresso/90">
+          <li>Up to 50 records in your collection</li>
+          <li>Up to 25 wishlist items</li>
+          <li>1 wishlist share link</li>
+          <li>Condition tracking &amp; photos</li>
+        </ul>
+      </div>
+      <div class="border-2 border-gold rounded-lg p-6 bg-white/70 relative">
+        <span class="absolute -top-3 right-4 bg-gold text-espresso text-[10px] tracking-[0.1em] uppercase px-2 py-0.5 rounded">For serious diggers</span>
+        <h2 class="font-serif text-xl text-espresso mb-1">Premium</h2>
+        <p class="text-espresso/60 text-sm mb-4">Everything, unlimited.</p>
+        <p class="font-serif text-3xl text-espresso mb-1">$5<span class="text-base text-espresso/60">/month</span></p>
+        <p class="text-xs text-espresso/50 mb-4">Billed monthly. Cancel anytime.</p>
+        <ul class="space-y-2 text-sm text-espresso/90">
+          <li>Unlimited collection size</li>
+          <li>Unlimited wishlist items</li>
+          <li>Unlimited sharing &amp; notifications</li>
+          <li>Priority support</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="space-y-4 text-sm text-espresso/80 leading-relaxed">
+      <p>Prices are in US dollars. Subscriptions are sold by <strong>Paddle</strong> (Merchant of Record), which handles checkout, taxes, and billing. You can cancel at any time — see our <a href="/refund" class="underline">Refund &amp; Cancellation Policy</a>.</p>
+      <p>Existing users keep what they've got; if you were an early tester, your access is preserved.</p>
+    </div>
+  </div>
+</Layout>

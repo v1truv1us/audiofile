@@ -17,7 +17,7 @@ export function isPublicShareView(
 	return new URLSearchParams(location.search).has('share');
 }
 
-const PUBLIC_PAGES = new Set(['/login', '/signup']);
+const PUBLIC_PAGES = new Set(['/login', '/signup', '/terms', '/privacy', '/refund', '/pricing']);
 
 /** Pages that do not require a signed-in session. */
 export function isPublicPage(
