@@ -11,11 +11,13 @@ Snapshot: **2026-07-24.** All creative + community assets are staged. A few owne
 
 ---
 
-## Step 1a — Launch publicly NOW (billing off, ~10 min)
-- [ ] **Coolify env: set `BILLING_ENABLED=false`** — kill-switch lifts free-tier limits, blocks checkout, shows "Premium coming soon". (Local `backend/.env` already set.)
-- [ ] **Deploy the frontend** so the new policy pages (`/terms`, `/privacy`, `/refund`, `/pricing`) + footer links are live for users/reviewers.
-- [ ] Confirm the **support@audiofile.app** inbox exists (now on the footer + policies).
-- Result: app is fully usable by the public with no paywall. Safe to run the community launch.
+## Step 1a — Launch publicly NOW — ✅ SHIPPED (2026-07-24)
+- [x] **Coolify env: `BILLING_ENABLED=false`** set (via Coolify API).
+- [x] **Deployed the frontend** — `/terms`, `/privacy`, `/refund`, `/pricing` + footer links live and verified.
+- [x] **Domain provisionally approved** by Paddle (payouts pending Paddle re-crawl of the now-live policy pages).
+- [x] **Live webhook handler verified end-to-end** (signed → 200, unsigned → 400; Cloudflare passes Paddle-style requests).
+- [x] **paddle-live MCP** configured (opencode) + live catalog confirmed (Premium Monthly product + $5/mo price, active; webhook destination active).
+- [ ] **Make `support@audiofile.app` real**: Cloudflare → Email → Email Routing → add `support@audiofile.app` → forward to your inbox, then click the verification email. (It's now in the footer + policies; Paddle + customers will email it.)
 
 ## Step 1b — Take real payments later (after Paddle verification)
 Live migration done: product `pro_01kykdwhpf30n80wqn50b3xwe3`, price `pri_01kykdwht33gz89pj1t9898yny`, webhook dest `ntfset_01kykdwj0j7eqfyzmrsg45y4cd` (signing secret captured). `backend/.env` is on live; **Coolify stays on sandbox** until these clear:

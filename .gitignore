@@ -46,6 +46,10 @@ specs/
 .opencode/
 /.crew/
 /.crew
+# Temp screenshots & local skill installs
+skerry_*.png
+skills/
+skills-lock.json
 !.crew/artifacts/
 !.crew/graphs/
 !.crew/artifacts/.gitkeep
