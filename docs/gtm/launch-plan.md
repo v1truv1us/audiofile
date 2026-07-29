@@ -10,6 +10,8 @@ Budget: ~$0–500 (founder-led, organic-first)
 - **New game**: your collection is a living thing you can show people — hunting lists your friends can actually see, the moment you share them.
 - **Vehicle**: AudioFile — catalog your vinyl, share your wishlist to anyone, get notified when lists land in your inbox. Free to start; $5/mo Premium for serious diggers.
 
+> **Acquisition hook (decided 2026-07-22):** Lead with **speed** — the in-store "do I own this?" pain collectors voice loudest (see `docs/gtm/drafts/swipe-file.md`). Position **sharing** (above) as the strategic differentiator. Execution calendar + drafted posts: `docs/gtm/community-launch-plan.md`.
+
 ## Key messages
 
 1. **"Your wantlist, shareable."** Share your hunting list to a friend by username — they get a notification and can browse it in-app.
@@ -32,7 +34,7 @@ Budget: ~$0–500 (founder-led, organic-first)
 | Email | 3-email sequence to existing users: teaser → launch → "in case you missed it" |
 | In-app | Upgrade banner already ships; add a one-time "what's new" note pointing at sharing |
 | Changelog/blog | One long-form post: "Sharing your wishlist, and what's next for AudioFile" (SEO: "vinyl wishlist app", "share record collection") |
-| Hacker News | Skip for Tier 2 consumer app (low fit) |
+| Hacker News | Optional — Show HN (hobby projects perform well per research); first cut if time-tight |
 | Press/influencers | Skip formal press; DM 5–10 vinyl-community accounts with early access |
 
 ## Timeline
@@ -40,7 +42,7 @@ Budget: ~$0–500 (founder-led, organic-first)
 **Week -2 (after prod checklist is green)**
 - Record demo clip (phone screen record: share → notification → claim flow)
 - Write blog post + 3 emails + 8–10 social posts
-- Prep Product Hunt assets: tagline (<60 chars: "Catalog your vinyl. Share the hunt."), 5 screenshots, first-comment story
+- Prep Product Hunt assets: tagline (<60 chars: "Catalog your vinyl fast. Share the hunt."), 5 screenshots, first-comment story
 - Line up 20 first-hour supporters (friends, beta users, vinyl community contacts)
 - Email existing users a teaser: "Next week: your wishlist gets social"
 

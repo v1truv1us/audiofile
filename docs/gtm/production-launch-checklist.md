@@ -5,18 +5,29 @@ Everything below is verified against production as of 2026-07-20. Code is merged
 ## Already done
 
 - [x] Code merged to `main` (Paddle billing, notifications, claim links)
-- [x] DB migrations applied to production: `00001`–`00007` (incl. `paddle_webhook_events`, `notifications`) and recorded in `supabase_migrations.schema_migrations`
+- [x] DB migrations applied to production: `00001`–`00008` (incl. `paddle_webhook_events`, `notifications`) and recorded in `supabase_migrations.schema_migrations`
 - [x] VIP exemptions set: `john.ferguson@v1truv1us.dev` (VIP + admin), `porgito2011@gmail.com` (VIP), `snobord4life@gmail.com` (VIP), `mcp-test@audiofile.app` (VIP, pre-existing)
 - [x] Verified: prod Paddle API key valid (`GET /api/billing/test` → reachable)
 - [x] Verified: webhook signature enforcement active (unsigned POST → 400)
 - [x] Verified: `/api/billing/status` returns correct tier/limits per user
 - [x] Verified: sandbox price `pri_01kvd8cef535j23f40kz63qdyf` active ($5/mo)
 
-## Blocking — Paddle dashboard (owner action required)
+## Paddle — sandbox → live migration (2026-07-24)
 
-- [ ] **Approve checkout domain**: Paddle Dashboard → Checkout → Domain approval → add `audiofile.app`. Without this, transaction creation fails with `transaction_checkout_url_domain_is_not_approved` (verified 2026-07-20).
-- [ ] **Webhook destination**: Developer Tools → Notifications → URL `https://audiofile.app/api/billing/webhook`, events: `transaction.completed`, `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.paused`. Confirm the secret matches `PADDLE_WEBHOOK_SECRET` in Coolify.
-- [ ] Decide sandbox vs production: prod currently runs `PADDLE_ENVIRONMENT=sandbox`. Going live means switching all Paddle vars to `pdl_live_*` / `live_*` values and repeating domain approval in the production Paddle account.
+Live catalog + webhook destination created in the LIVE account via API. Sandbox → live ID map:
+- Product: `pro_01kvd8bpqs11zv3mvm88z4c2ew` → **`pro_01kykdwhpf30n80wqn50b3xwe3`**
+- Price:   `pri_01kvd8cef535j23f40kz63qdyf` → **`pri_01kykdwht33gz89pj1t9898yny`** ($5/mo)
+- Webhook destination: **`ntfset_01kykdwj0j7eqfyzmrsg45y4cd`** → `https://audiofile.app/api/billing/webhook` (signing secret captured = `PADDLE_WEBHOOK_SECRET`)
+
+Code is env-driven; `backend/.env` switched to live for local/staging verification. **Coolify (production) remains on sandbox until the items below clear + Part 3.**
+
+### Blocking — Paddle LIVE dashboard (owner action required)
+
+- [ ] **Approve checkout domain (LIVE)**: Paddle live dashboard → Checkout → Website approval → add `audiofile.app`. Live does NOT auto-approve; without this, live checkout fails to load.
+- [ ] **Default payment link (LIVE)**: Checkout → Checkout settings → Default payment link → your live checkout page (real approved domain, not localhost).
+- [ ] **Revoke the migration API key** (`pdl_live_apikey_01kykdjhbrgz…`) — served its purpose; keep only the runtime key in production.
+- [ ] Local/staging verification: backend with live env → `GET /api/billing/config` returns the `live_…` token + `pri_01kykdwht33…`; run a checkout once the domain is approved.
+- [ ] **Part 3**: switch to `vendors.paddle.com` for verification + a real payment, then update Coolify env + deploy.
 
 ## Blocking — Coolify env vars
 
@@ -25,6 +36,10 @@ Set via Coolify API on 2026-07-21 (all six Paddle vars + `APP_BASE_URL`):
 - [x] `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_ENVIRONMENT` (sandbox), `PADDLE_CLIENT_TOKEN`, `PADDLE_PREMIUM_MONTHLY_PRICE_ID`, `APP_BASE_URL` — verified live: `/api/billing/config` returns the real client token + price ID
 - [ ] `SUPABASE_SERVICE_ROLE_KEY` — recipient email lookup for share emails (server-only)
 - [ ] `RESEND_API_KEY`, `RESEND_FROM_EMAIL` — share notification emails (optional but recommended)
+
+## Database
+
+- [x] Applied security migration `supabase/migrations/00008_paddle_webhook_events_rls.sql` to production (2026-07-22 via `supabase db push`). Enables RLS on `paddle_webhook_events` to clear the Security advisor warning. Recorded in `supabase_migrations.schema_migrations`; `00001`–`00008` now synced.
 
 ## Blocking — Deploy
 
