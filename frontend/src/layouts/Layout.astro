@@ -2,9 +2,10 @@
 import '../styles/global.css';
 import NotificationBell from '../components/NotificationBell.svelte';
 
-interface Props { title: string; authRequired?: boolean; }
-const { title, authRequired = true } = Astro.props;
+interface Props { title: string; authRequired?: boolean; description?: string; }
+const { title, authRequired = true, description = 'AudioFile — catalogue your vinyl collection, track wishlists, and share finds with fellow diggers.' } = Astro.props;
 const authPendingClass = authRequired ? 'auth-pending' : '';
+const canonicalURL = new URL(Astro.url.pathname, Astro.site).href;
 ---
 <!doctype html>
 <html lang="en">
@@ -15,6 +16,15 @@ const authPendingClass = authRequired ? 'auth-pending' : '';
     <link rel="icon" sizes="32x32" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>{title} | AudioFile</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalURL} />
+    {authRequired && <meta name="robots" content="noindex, nofollow" />}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="AudioFile" />
+    <meta property="og:title" content={`${title} | AudioFile`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalURL} />
+    <meta name="twitter:card" content="summary" />
     <style is:inline>
       .auth-pending main {
         visibility: hidden;
