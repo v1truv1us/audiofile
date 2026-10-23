@@ -1,7 +1,37 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Dashboard from '../components/Dashboard.svelte';
 ---
-<Layout title="Dashboard">
-	<Dashboard client:load />
+<Layout
+	title="Catalog Your Vinyl Collection"
+	authRequired={false}
+	description="AudioFile — catalogue your vinyl collection, track wishlists, and share finds with fellow diggers. Free to start."
+>
+	<section class="max-w-3xl mx-auto text-center py-10 sm:py-16">
+		<p class="text-gold-dark text-xs tracking-[0.2em] uppercase mb-4">Your Collection, Catalogued</p>
+		<h1 class="font-serif text-4xl sm:text-5xl text-espresso leading-tight mb-4">
+			Your vinyl collection, organized and on display.
+		</h1>
+		<p class="text-espresso/70 text-lg mb-8 max-w-xl mx-auto">
+			Catalogue every record, track your wishlist, see your collection's value, and share finds with fellow diggers.
+		</p>
+		<div class="flex flex-wrap gap-4 justify-center">
+			<a href="/signup" class="bg-gold text-espresso text-sm tracking-[0.08em] uppercase font-medium px-6 py-3 rounded hover:bg-gold-mid transition-colors">Create free account</a>
+			<a href="/pricing" class="border border-espresso/20 text-espresso text-sm tracking-[0.08em] uppercase px-6 py-3 rounded hover:border-espresso/40 transition-colors">See pricing</a>
+		</div>
+	</section>
+
+	<section class="grid sm:grid-cols-3 gap-6 max-w-4xl mx-auto pb-12">
+		<div class="border border-espresso/15 rounded-lg p-6 bg-white/50">
+			<h2 class="font-serif text-xl text-espresso mb-2">Catalogue everything</h2>
+			<p class="text-espresso/60 text-sm">Add records with artwork and details. Search and filter your full collection in seconds.</p>
+		</div>
+		<div class="border border-espresso/15 rounded-lg p-6 bg-white/50">
+			<h2 class="font-serif text-xl text-espresso mb-2">Track wishlists &amp; value</h2>
+			<p class="text-espresso/60 text-sm">Keep a running wishlist, mark records for sale, and watch your collection's total value.</p>
+		</div>
+		<div class="border border-espresso/15 rounded-lg p-6 bg-white/50">
+			<h2 class="font-serif text-xl text-espresso mb-2">Share with diggers</h2>
+			<p class="text-espresso/60 text-sm">Publish your collection or wishlist so fellow crate diggers can see what you've found.</p>
+		</div>
+	</section>
 </Layout>

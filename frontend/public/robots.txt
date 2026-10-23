@@ -6,5 +6,6 @@ Disallow: /shared
 Disallow: /account
 Disallow: /settings
 Disallow: /notifications
+Disallow: /dashboard
 
 Sitemap: https://audiofile.app/sitemap-index.xml
