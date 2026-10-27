@@ -26,3 +26,31 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: cd frontend && bun install --frozen-lockfile
       - run: cd frontend && bun run build
+
+  landing-e2e:
+    name: Public landing page E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: cd frontend && bun install --frozen-lockfile
+      - name: Build frontend
+        run: cd frontend && bun run build
+      - name: Install Chromium
+        run: cd frontend && bunx playwright install --with-deps chromium
+      - name: Test public landing page
+        working-directory: frontend
+        run: |
+          bunx astro preview --port 4322 > /tmp/audiofile-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill $PREVIEW_PID 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:4322/ > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:4322/ > /dev/null
+          BASE_URL=http://localhost:4322 bunx playwright test e2e/dashboard.spec.ts --grep "Public landing" --project="Desktop Chrome"
