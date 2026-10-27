@@ -73,15 +73,15 @@ test.describe('Dashboard (/dashboard)', () => {
 
 test.describe('Public landing page (/)', () => {
 	test('renders marketing landing for signed-out visitors', async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/', { waitUntil: 'domcontentloaded' });
 		await expect(page).toHaveTitle(/Catalog Your Vinyl Collection.*AudioFile/);
 		await expect(page.locator('h1', { hasText: 'vinyl collection' })).toBeVisible();
 		await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
 	});
 
 	test('landing CTAs link to signup and pricing', async ({ page }) => {
-		await page.goto('/');
+		await page.goto('/', { waitUntil: 'domcontentloaded' });
 		await expect(page.locator('a[href="/signup"]')).toBeVisible();
-		await expect(page.locator('a[href="/pricing"]')).toBeVisible();
+		await expect(page.locator('a[href="/pricing"]').first()).toBeVisible();
 	});
 });
