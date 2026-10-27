@@ -1,6 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-const SUPABASE_AUTH_KEY = 'sb-bwzldaesynlruqukbnej-auth-token';
+// Must match supabase-js's derived localStorage key: sb-<hostname-label>-auth-token
+const SUPABASE_URL = process.env.PUBLIC_SUPABASE_URL || 'https://supabase.v1truv1us.dev';
+const SUPABASE_AUTH_KEY = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
 
 async function signIn(page: import('@playwright/test').Page) {
 	await page.addInitScript((key) => {
