@@ -45,6 +45,10 @@ npm run dev
 
 Runs on `http://0.0.0.0:4321` (accessible on your LAN).
 
+### Public and authenticated routes
+
+`/` is the public, indexable marketing landing page for signed-out visitors. Signed-in visitors to `/` are redirected client-side to `/dashboard`. The dashboard is auth-gated and intentionally `noindex` (also disallowed in `robots.txt`); other protected routes follow the same pattern. Public pages include `/`, `/pricing`, `/login`, `/signup`, `/terms`, `/privacy`, and `/refund`. The public-page set is defined in `frontend/src/lib/auth-guard.ts`, and the signed-in homepage redirect is implemented in `frontend/src/layouts/Layout.astro`.
+
 ### E2E Tests
 
 ```bash

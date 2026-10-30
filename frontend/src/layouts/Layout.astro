@@ -130,6 +130,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site).href;
         window.location.replace('/login')
         return
       }
+      // Signed-in users get their dashboard instead of the public landing page.
+      if (session && currentPath === '/') {
+        window.location.replace('/dashboard')
+        return
+      }
       if (session && publicAuthPages.includes(currentPath)) {
         window.location.replace('/')
         return
