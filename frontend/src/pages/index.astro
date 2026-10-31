@@ -1,11 +1,37 @@
 ---
 import Layout from '../layouts/Layout.astro';
+
+const structuredData = {
+	'@context': 'https://schema.org',
+	'@graph': [
+		{
+			'@type': 'Organization',
+			'@id': 'https://audiofile.app/#organization',
+			name: 'AudioFile',
+			url: 'https://audiofile.app/',
+			logo: 'https://audiofile.app/favicon.svg',
+		},
+		{
+			'@type': 'WebApplication',
+			'@id': 'https://audiofile.app/#app',
+			name: 'AudioFile',
+			url: 'https://audiofile.app/',
+			applicationCategory: 'MultimediaApplication',
+			operatingSystem: 'Web',
+			description:
+				'Catalogue your vinyl collection, track wishlists, and share finds with fellow diggers.',
+			offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+			publisher: { '@id': 'https://audiofile.app/#organization' },
+		},
+	],
+};
 ---
 <Layout
 	title="Catalog Your Vinyl Collection"
 	authRequired={false}
 	description="AudioFile — catalogue your vinyl collection, track wishlists, and share finds with fellow diggers. Free to start."
 >
+	<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
 	<section class="max-w-3xl mx-auto text-center py-10 sm:py-16">
 		<p class="text-gold-dark text-xs tracking-[0.2em] uppercase mb-4">Your Collection, Catalogued</p>
 		<h1 class="font-serif text-4xl sm:text-5xl text-espresso leading-tight mb-4">
