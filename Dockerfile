@@ -1,6 +1,6 @@
 # Stage 1: Build frontend
 FROM oven/bun:1 AS frontend-build
-ARG PUBLIC_SUPABASE_URL=https://bwzldaesynlruqukbnej.supabase.co
+ARG PUBLIC_SUPABASE_URL=https://supabase.v1truv1us.dev
 ARG PUBLIC_SUPABASE_ANON_KEY
 ENV PUBLIC_SUPABASE_URL=$PUBLIC_SUPABASE_URL
 ENV PUBLIC_SUPABASE_ANON_KEY=$PUBLIC_SUPABASE_ANON_KEY
