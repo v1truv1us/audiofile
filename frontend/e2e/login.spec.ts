@@ -7,6 +7,11 @@ test.describe('Login page', () => {
 		await expect(page).toHaveTitle(/Sign In.*AudioFile/);
 	});
 
+	test('is excluded from search indexing', async ({ page }) => {
+		await page.goto('/login');
+		await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex, nofollow');
+	});
+
 	test('does not show passkey sign-in', async ({ page }) => {
 		await page.goto('/login');
 		await expect(page.locator('text=Passkey')).not.toBeVisible();
