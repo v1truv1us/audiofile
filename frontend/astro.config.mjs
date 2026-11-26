@@ -14,7 +14,7 @@ export default defineConfig({
     svelte(),
     sitemap({
       filter: (page) => {
-        const publicPaths = ['/', '/pricing', '/login', '/signup', '/privacy', '/terms', '/refund'];
+        const publicPaths = ['/', '/pricing', '/signup', '/privacy', '/terms', '/refund'];
         const path = new URL(page).pathname.replace(/\/$/, '') || '/';
         return publicPaths.includes(path);
       },

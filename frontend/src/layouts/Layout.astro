@@ -2,8 +2,8 @@
 import '../styles/global.css';
 import NotificationBell from '../components/NotificationBell.svelte';
 
-interface Props { title: string; authRequired?: boolean; description?: string; }
-const { title, authRequired = true, description = 'AudioFile — catalogue your vinyl collection, track wishlists, and share finds with fellow diggers.' } = Astro.props;
+interface Props { title: string; authRequired?: boolean; description?: string; noindex?: boolean; }
+const { title, authRequired = true, description = 'AudioFile — catalogue your vinyl collection, track wishlists, and share finds with fellow diggers.', noindex = false } = Astro.props;
 const authPendingClass = authRequired ? 'auth-pending' : '';
 const canonicalURL = new URL(Astro.url.pathname, Astro.site).href;
 ---
@@ -18,7 +18,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site).href;
     <title>{title} | AudioFile</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonicalURL} />
-    {authRequired && <meta name="robots" content="noindex, nofollow" />}
+    {(authRequired || noindex) && <meta name="robots" content="noindex, nofollow" />}
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="AudioFile" />
     <meta property="og:title" content={`${title} | AudioFile`} />
